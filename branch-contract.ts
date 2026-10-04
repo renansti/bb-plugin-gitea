@@ -89,13 +89,19 @@ export const remoteBranchSchema = z
   .object({
     name: z.string().min(1),
     group: z.enum(["pull", "mine", "other"]),
-    pull: z.object({ number: z.number().int(), url: z.string() }).nullable(),
+    pull: z
+      .object({
+        number: z.number().int(),
+        url: z.string(),
+        status: z.enum(["draft", "failing", "running", "passing", "none", "merged"]),
+      })
+      .nullable(),
     updatedAt: z.string(),
   })
   .strict();
 export type RemoteBranch = z.infer<typeof remoteBranchSchema>;
 
-/** RPC methods the "Gitea branch" picker calls. They join the plugin's main RPC contract. */
+/** RPC methods the "Gitea" environment picker calls. They join the plugin's main RPC contract. */
 export const branchRpcMethods = {
   remoteBranches: {
     input: z

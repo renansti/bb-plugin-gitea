@@ -20,10 +20,16 @@ const rpc = {
       {
         name: "review",
         group: "pull",
-        pull: { number: 7, url: "https://gitea.example/acme/widgets/pulls/7" },
+        pull: { number: 7, url: "https://gitea.example/acme/widgets/pulls/7", status: "failing" },
         updatedAt: "2026-09-02T00:00:00Z",
       },
       { name: "mine", group: "mine", pull: null, updatedAt: "2026-09-05T00:00:00Z" },
+      {
+        name: "shipped",
+        group: "other",
+        pull: { number: 3, url: "https://gitea.example/acme/widgets/pulls/3", status: "merged" },
+        updatedAt: "2026-09-01T00:00:00Z",
+      },
     ],
   }),
   branchDefaultBase: () => ({ branch: "main" }),
@@ -54,12 +60,12 @@ async function open(label: string) {
   await screen.findByText(label);
 }
 
-it("lists Work in, then Remote branch, then Local branch, and picks a remote branch", async () => {
+it("lists Work in, then your branches, then other branches, with no local branches", async () => {
   const onChange = render({ kind: "new", from: { kind: "default" } });
   expect(await screen.findByText("main")).toBeTruthy();
   await open("review");
   const menu = within(screen.getByRole("dialog"));
-  const headers = ["Work in:", "Remote branch:", "Local branch:"].map((label) =>
+  const headers = ["Work in:", "Your branches:", "Other branches:"].map((label) =>
     menu.getByText(label),
   );
   for (let index = 1; index < headers.length; index += 1)
@@ -67,32 +73,34 @@ it("lists Work in, then Remote branch, then Local branch, and picks a remote bra
       headers[index - 1]!.compareDocumentPosition(headers[index]!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-  expect(screen.getByText("#7")).toBeTruthy();
-  expect(screen.getByText("develop")).toBeTruthy();
-  const rows = screen.getAllByRole("button").map((row) => row.textContent);
-  expect(rows.indexOf("review#7")).toBeLessThan(rows.indexOf("mine"));
+  expect(menu.queryByText("Local branch:")).toBeNull();
+  expect(menu.queryByText("develop")).toBeNull();
+  const rows = menu.getAllByRole("button").map((row) => row.textContent);
+  expect(rows).toEqual(["New worktree", "Existing worktree", "review#7", "mine", "shipped#3"]);
+  expect(menu.getByText("#7").getAttribute("data-status")).toBe("failing");
+  expect(menu.getByText("#7").className).toContain("text-red-600");
+  expect(menu.getByText("#3").getAttribute("title")).toBe("Pull request #3: Merged");
 
-  await act(async () => fireEvent.click(screen.getByText("review")));
+  await act(async () => fireEvent.click(menu.getByText("review")));
   expect(onChange).toHaveBeenLastCalledWith({
     status: "ready",
     value: { kind: "remote", name: "review" },
   });
 });
 
-it("starts a new branch from a local branch", async () => {
-  const onChange = render({ kind: "new", from: { kind: "default" } });
-  await open("develop");
-  await act(async () => fireEvent.click(screen.getByText("develop")));
+it("goes back to a new branch from the default branch when New worktree is picked", async () => {
+  const onChange = render({ kind: "existing", path: "/src/widgets-wt" });
+  await open("Keep current branch");
+  await act(async () => fireEvent.click(screen.getByText("New worktree")));
   expect(onChange).toHaveBeenLastCalledWith({
     status: "ready",
-    value: { kind: "new", from: { kind: "named", name: "develop" } },
+    value: { kind: "new", from: { kind: "default" } },
   });
 });
 
 it("switches a picked existing worktree to a remote branch", async () => {
   const onChange = render({ kind: "existing", path: "/src/widgets-wt" });
   await open("Keep current branch");
-  expect(within(screen.getByRole("dialog")).queryByText("Local branch:")).toBeNull();
   await screen.findByText("review");
   await act(async () => fireEvent.click(screen.getByText("review")));
   expect(onChange).toHaveBeenLastCalledWith({

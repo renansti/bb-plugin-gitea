@@ -12,7 +12,7 @@ import {
 } from "./branch-contract.js";
 import {
   orderRemoteBranches,
-  type OpenPullInput,
+  type PullInput,
   type RemoteBranchInput,
 } from "./branch-order.js";
 
@@ -22,7 +22,7 @@ const ADOPTED_RESOURCE = { adopted: true } as const;
 
 export interface RemoteBranchData {
   branches: RemoteBranchInput[];
-  pulls: OpenPullInput[];
+  pulls: PullInput[];
   truncated: boolean;
 }
 
@@ -50,7 +50,7 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Registers the "Gitea branch" environment provider and returns the RPC
+ * Registers the "Gitea" environment provider and returns the RPC
  * handlers its picker uses.
  */
 export function registerBranchProvider(
@@ -167,7 +167,7 @@ export function registerBranchProvider(
 
   bb.experimental_environments.register({
     id: GITEA_BRANCH_ENVIRONMENT_PROVIDER_ID,
-    displayName: "Gitea branch",
+    displayName: "Gitea",
     description: "Work on a Gitea branch in a worktree.",
     icon: "gitea/teacup",
     requires: { gitCheckout: true },

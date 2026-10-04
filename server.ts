@@ -26,6 +26,7 @@ import {
 import { draftTitle, isDraftTitle } from "./draft-title.js";
 import { branchRpcMethods } from "./branch-contract.js";
 import { registerBranchProvider } from "./branch-provider.js";
+import type { PullStatus } from "./branch-order.js";
 import {
   archived,
   activePolicy,
@@ -467,6 +468,8 @@ const pageSize = 50;
 const maxPages = 10;
 const maxReviewCommentReads = 50;
 const maxListRepositories = 50;
+const maxMergedPullPages = 2;
+const maxPullStatusReads = 60;
 const conversationPolicy: FreshnessPolicy = {
   freshMs: 15_000,
   retainMs: 10 * 60_000,
@@ -558,6 +561,21 @@ function checkStatus(state: string): Check["status"] {
   if (state === "failure" || state === "error") return "failure";
   if (state === "pending") return "pending";
   return "neutral";
+}
+
+/** Badge state of an open pull request from its head commit's combined status. */
+export function pullCiStatus(combined: Record<string, unknown>): PullStatus {
+  if (Number(combined.total_count) === 0) return "none";
+  switch (checkStatus(text(combined.state))) {
+    case "success":
+      return "passing";
+    case "failure":
+      return "failing";
+    case "pending":
+      return "running";
+    default:
+      return "none";
+  }
 }
 
 class GiteaAccessError extends Error {}
@@ -2452,43 +2470,92 @@ export default async function plugin(bb: BbPluginApi) {
         typeof value === "object" && value !== null && !Array.isArray(value)
           ? (value as Record<string, unknown>)
           : {};
-      const [branches, pulls] = await Promise.all([
+      const [branchPage, openPage, closedPage] = await Promise.all([
         paginated(repoPath(repo, "branches"), signal, maxPages, 4),
         paginated(repoPath(repo, "pulls?state=open"), signal, maxPages, 4),
+        // Merged badges cover the most recently updated closed pull requests only.
+        paginated(
+          repoPath(repo, "pulls?state=closed&sort=recentupdate"),
+          signal,
+          maxMergedPullPages,
+          maxMergedPullPages,
+        ),
       ]);
+      const branches = branchPage.values.flatMap((entry) => {
+        const branch = field(entry);
+        const commit = field(branch.commit);
+        const name = text(branch.name);
+        if (!name) return [];
+        return [
+          {
+            name,
+            authors: [
+              text(field(commit.author).username),
+              text(field(commit.committer).username),
+            ].filter(Boolean),
+            updatedAt: text(commit.timestamp),
+          },
+        ];
+      });
+      const branchNames = new Set(branches.map((branch) => branch.name));
+      const pulls = [...openPage.values, ...closedPage.values].flatMap((entry) => {
+        const pull = field(entry);
+        const head = field(pull.head);
+        const headBranch = text(head.ref);
+        const merged = pull.merged === true;
+        // Branches from forks live in another repository, so they cannot be checked out from origin.
+        if (
+          repoKey(text(field(head.repo).full_name)) !== repoKey(repo) ||
+          !branchNames.has(headBranch) ||
+          (text(pull.state) !== "open" && !merged)
+        )
+          return [];
+        return [
+          {
+            number: Number(pull.number),
+            url: safeLink(base, pull.html_url),
+            author: text(field(pull.user).login),
+            headBranch,
+            updatedAt: text(pull.updated_at),
+            state: merged ? ("merged" as const) : ("open" as const),
+            draft: pull.draft === true || isDraftTitle(text(pull.title)),
+            sha: text(head.sha),
+          },
+        ];
+      });
+      const ciChecks = pulls
+        .filter((pull) => pull.state === "open" && !pull.draft && pull.sha)
+        .slice(0, maxPullStatusReads);
+      const ciState = new Map(
+        await Promise.all(
+          ciChecks.map(async (pull) => {
+            try {
+              const combined = field(
+                await api(
+                  repoPath(repo, `commits/${encodeURIComponent(pull.sha)}/status`),
+                  { signal },
+                ),
+              );
+              return [pull.number, pullCiStatus(combined)] as const;
+            } catch (error) {
+              if (signal?.aborted) throw error;
+              return [pull.number, "none" as PullStatus] as const;
+            }
+          }),
+        ),
+      );
       return {
-        truncated: branches.truncated || pulls.truncated,
-        branches: branches.values.flatMap((entry) => {
-          const branch = field(entry);
-          const commit = field(branch.commit);
-          const name = text(branch.name);
-          if (!name) return [];
-          return [
-            {
-              name,
-              authors: [
-                text(field(commit.author).username),
-                text(field(commit.committer).username),
-              ].filter(Boolean),
-              updatedAt: text(commit.timestamp),
-            },
-          ];
-        }),
-        pulls: pulls.values.flatMap((entry) => {
-          const pull = field(entry);
-          const head = field(pull.head);
-          // Branches from forks live in another repository, so they cannot be checked out from origin.
-          if (repoKey(text(field(head.repo).full_name)) !== repoKey(repo)) return [];
-          return [
-            {
-              number: Number(pull.number),
-              url: safeLink(base, pull.html_url),
-              author: text(field(pull.user).login),
-              headBranch: text(head.ref),
-              updatedAt: text(pull.updated_at),
-            },
-          ];
-        }),
+        truncated: branchPage.truncated || openPage.truncated,
+        branches,
+        pulls: pulls.map(({ draft, sha: _sha, ...pull }) => ({
+          ...pull,
+          status:
+            pull.state === "merged"
+              ? ("merged" as const)
+              : draft
+                ? ("draft" as const)
+                : (ciState.get(pull.number) ?? ("none" as const)),
+        })),
       };
     },
   });

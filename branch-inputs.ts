@@ -3,7 +3,7 @@ import { z } from "zod";
 export const GITEA_BRANCH_ENVIRONMENT_PROVIDER_ID = "gitea-branch";
 
 /**
- * What the "Gitea branch" environment does when a thread starts.
+ * What the "Gitea" environment does when a thread starts.
  *
  * - `new`: create a worktree on a new thread branch that starts from `from`.
  * - `remote`: create a worktree on the remote branch `name` itself.

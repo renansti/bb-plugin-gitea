@@ -2,13 +2,11 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
-  experimental_useBranches,
   useRpc,
   type PluginEnvironmentProviderInputsProps,
 } from "@get-bb/plugin-sdk/app";
@@ -107,6 +105,30 @@ function Row({
   );
 }
 
+type PullStatus = NonNullable<RemoteBranch["pull"]>["status"];
+
+const PULL_BADGE: Record<PullStatus, { className: string; label: string }> = {
+  draft: { className: "bg-muted text-muted-foreground", label: "Draft" },
+  none: { className: "bg-muted text-muted-foreground", label: "No CI" },
+  failing: { className: "bg-red-500/15 text-red-600 dark:text-red-400", label: "CI failing" },
+  running: { className: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400", label: "CI running" },
+  passing: { className: "bg-green-500/15 text-green-700 dark:text-green-400", label: "CI passing" },
+  merged: { className: "bg-purple-500/15 text-purple-700 dark:text-purple-400", label: "Merged" },
+};
+
+function PullBadge({ pull }: { pull: NonNullable<RemoteBranch["pull"]> }) {
+  const badge = PULL_BADGE[pull.status];
+  return (
+    <span
+      className={cn("shrink-0 rounded px-1.5 py-px text-[11px] font-medium leading-4", badge.className)}
+      title={`Pull request #${pull.number}: ${badge.label}`}
+      data-status={pull.status}
+    >
+      #{pull.number}
+    </span>
+  );
+}
+
 function Note({ children }: { children: ReactNode }) {
   return (
     <p className="px-2 py-3 text-center text-xs text-muted-foreground">{children}</p>
@@ -155,9 +177,10 @@ function useScoped<T>(key: string | null, load: (key: string) => Promise<T>) {
 }
 
 /**
- * The "Gitea branch" environment control. Lists where to work, the
- * repository's Gitea branches, and the local branches a new thread branch
- * can start from.
+ * The "Gitea" environment control. Lists where to work and the repository's
+ * Gitea branches, split into the signed-in user's branches and all others.
+ * With no branch picked, a new worktree gets a new thread branch from the
+ * default branch.
  */
 export function GiteaBranchInputsControl({
   projectId,
@@ -174,12 +197,6 @@ export function GiteaBranchInputsControl({
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const branchState = experimental_useBranches({
-    hostId,
-    projectId,
-    query: intent === "new" ? deferredQuery.trim().toLowerCase() : "",
-  });
 
   const loadRemote = useCallback(
     (key: string) => rpc.call("remoteBranches", { projectId: key, refresh: false }),
@@ -227,13 +244,6 @@ export function GiteaBranchInputsControl({
   const remoteBranches: RemoteBranch[] = (remote?.value?.branches ?? []).filter((branch) =>
     matches(deferredQuery, branch.name, branch.pull ? `#${branch.pull.number}` : ""),
   );
-  const localBranches = useMemo(
-    () =>
-      [...new Set([...branchState.branches, ...branchState.remoteBranches])].filter((branch) =>
-        matches(deferredQuery, branch),
-      ),
-    [branchState.branches, branchState.remoteBranches, deferredQuery],
-  );
   const worktrees: DiscoveredWorktree[] = (worktreeState?.value?.worktrees ?? []).filter(
     (worktree) => matches(deferredQuery, worktree.path, worktree.branch ?? ""),
   );
@@ -241,7 +251,6 @@ export function GiteaBranchInputsControl({
 
   const updateOpen = (nextOpen: boolean) => {
     if (nextOpen) {
-      void branchState.refresh().catch(() => undefined);
       void refreshRemote();
       if (selectedIntent === "existing") void reloadWorktrees();
     } else {
@@ -277,7 +286,7 @@ export function GiteaBranchInputsControl({
         };
       default: {
         const base = inputs?.from.kind === "named" ? inputs.from.name : defaultLabel;
-        return { prefix: "Local branch:", value: base, title: `Create a worktree from ${base}` };
+        return { prefix: "New branch from:", value: base, title: `Create a worktree on a new branch from ${base}` };
       }
     }
   })();
@@ -288,44 +297,51 @@ export function GiteaBranchInputsControl({
       return worktree ? () => submit({ kind: "existing", path: worktree.path }, false) : null;
     }
     const firstRemote = remoteBranches[0];
-    if (firstRemote) return () => pickRemote(firstRemote.name);
-    const firstLocal = intent === "new" ? localBranches[0] : undefined;
-    return firstLocal
-      ? () => submit({ kind: "new", from: { kind: "named", name: firstLocal } })
-      : null;
+    return firstRemote ? () => pickRemote(firstRemote.name) : null;
   })();
 
-  const remoteSection = (
-    <>
-      <SectionHeader label="Remote branch:" />
-      {remote?.value?.repo === null ? (
-        <Note>This project's origin is not on Gitea.</Note>
-      ) : remote?.value?.error || remote?.error ? (
-        <Note>{remote?.value?.error ?? remote?.error}</Note>
-      ) : remoteBranches.length === 0 ? (
-        <Note>{remote === null || remote.loading ? "Loading branches..." : "No branches found."}</Note>
-      ) : (
-        remoteBranches.map((branch) => (
-          <Row
-            key={branch.name}
-            icon={branch.pull ? "GitPullRequest" : "GitBranch"}
-            selected={
-              (inputs?.kind === "remote" && inputs.name === branch.name) ||
-              (inputs?.kind === "existing" && inputs.remoteBranch === branch.name)
-            }
-            title={branch.pull ? `${branch.name} (pull request #${branch.pull.number})` : branch.name}
-            onSelect={() => pickRemote(branch.name)}
-          >
-            <span className="min-w-0 flex-1 truncate">{branch.name}</span>
-            {branch.pull ? (
-              <span className="shrink-0 text-muted-foreground">#{branch.pull.number}</span>
-            ) : null}
-          </Row>
-        ))
-      )}
-      {remote?.value?.truncated ? <Note>Showing the first branches only.</Note> : null}
-    </>
-  );
+  const branchRows = (branches: readonly RemoteBranch[]) =>
+    branches.map((branch) => (
+      <Row
+        key={branch.name}
+        icon={branch.pull ? "GitPullRequest" : "GitBranch"}
+        selected={
+          (inputs?.kind === "remote" && inputs.name === branch.name) ||
+          (inputs?.kind === "existing" && inputs.remoteBranch === branch.name)
+        }
+        title={branch.name}
+        onSelect={() => pickRemote(branch.name)}
+      >
+        <span className="min-w-0 flex-1 truncate">{branch.name}</span>
+        {branch.pull ? <PullBadge pull={branch.pull} /> : null}
+      </Row>
+    ));
+  const yours = remoteBranches.filter((branch) => branch.group !== "other");
+  const others = remoteBranches.filter((branch) => branch.group === "other");
+  const remoteSection =
+    remote?.value?.repo === null ? (
+      <Note>This project's origin is not on Gitea.</Note>
+    ) : remote?.value?.error || remote?.error ? (
+      <Note>{remote?.value?.error ?? remote?.error}</Note>
+    ) : remoteBranches.length === 0 ? (
+      <Note>{remote === null || remote.loading ? "Loading branches..." : "No branches found."}</Note>
+    ) : (
+      <>
+        {yours.length > 0 ? (
+          <>
+            <SectionHeader label="Your branches:" />
+            {branchRows(yours)}
+          </>
+        ) : null}
+        {others.length > 0 ? (
+          <>
+            <SectionHeader label="Other branches:" />
+            {branchRows(others)}
+          </>
+        ) : null}
+        {remote?.value?.truncated ? <Note>Showing the first branches only.</Note> : null}
+      </>
+    );
 
   return (
     <Popover open={open} onOpenChange={updateOpen}>
@@ -393,10 +409,11 @@ export function GiteaBranchInputsControl({
           <Row
             icon="Plus"
             selected={intent === "new"}
-            title="Create a worktree for this thread"
+            title="Create a worktree on a new branch from the default branch, or pick a branch below"
             onSelect={() => {
               setIntent("new");
               setQuery("");
+              if (inputs?.kind !== "new") submit(DEFAULT_INPUTS, false);
             }}
           >
             <span className="min-w-0 flex-1 truncate">New worktree</span>
@@ -416,37 +433,7 @@ export function GiteaBranchInputsControl({
           </Row>
           <div className="my-1 h-px bg-border/60" />
           {intent === "new" ? (
-            <>
-              {remoteSection}
-              <div className="my-1 h-px bg-border/60" />
-              <SectionHeader label="Local branch:" />
-              <Row
-                icon="GitMerge"
-                selected={inputs?.kind === "new" && inputs.from.kind === "default"}
-                title="Start a new branch from the repository's default branch"
-                onSelect={() => submit(DEFAULT_INPUTS)}
-              >
-                <span className="min-w-0 flex-1 truncate">Default branch</span>
-              </Row>
-              {localBranches.map((branch) => (
-                <Row
-                  key={branch}
-                  icon="GitMerge"
-                  selected={
-                    inputs?.kind === "new" &&
-                    inputs.from.kind === "named" &&
-                    inputs.from.name === branch
-                  }
-                  title={`Start a new branch from ${branch}`}
-                  onSelect={() => submit({ kind: "new", from: { kind: "named", name: branch } })}
-                >
-                  <span className="min-w-0 flex-1 truncate">{branch}</span>
-                </Row>
-              ))}
-              {localBranches.length === 0 && branchState.isLoading ? (
-                <Note>Loading branches...</Note>
-              ) : null}
-            </>
+            remoteSection
           ) : (
             <>
               <SectionHeader label="Existing worktree:" />
