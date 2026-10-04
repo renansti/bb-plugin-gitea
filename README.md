@@ -51,6 +51,20 @@ An issue or pull request opens on **Conversation**, where you can:
 
 The same views appear in the side panel of a BB thread linked to the item.
 
+## Gitea branch environment
+
+When you start a thread, pick **Gitea branch** in the environment picker. Its menu has three parts:
+
+- **Work in**: **New worktree** or **Existing worktree**, the same choices as BB's Worktree environment.
+- **Remote branch**: every branch of the project's Gitea repository. Branches with an open pull request from you come first, then branches whose last commit is yours, then all other branches. Each group shows the newest first. A branch with a pull request shows its number.
+- **Local branch**: the branches a new thread branch can start from. This is the same list as **Branch from** in BB's Worktree environment.
+
+Picking a remote branch under **New worktree** creates a worktree on that branch itself. It does not create a new thread branch. The plugin fetches the branch from `origin`, then uses the local branch or creates one that tracks `origin`.
+
+Under **Existing worktree**, pick a worktree, then pick **Keep current branch** or a remote branch. A remote branch switches that worktree to it. The switch fails if the worktree has uncommitted changes.
+
+The environment is available only when the project's `origin` remote is on the configured Gitea instance. Branches from forks are not listed, because they cannot be checked out from `origin`. Worktrees go under the plugin's data folder on the machine that has the project checkout. The plugin does not copy `.worktreeinclude` files into new worktrees.
+
 ## Auto-fix and Auto-merge
 
 Pull request rows in **My PRs** and **Pull requests** have two independent switches, both off by default:

@@ -126,6 +126,7 @@ async function start(
   const calls = await startTea(api, options.profiles ?? defaultProfiles);
   const host = createFakePluginHost({
     pluginId: "gitea",
+    experimental_declaredIconNames: ["teacup"],
     settings: { ...defaultSettings, ...options.settings },
     sdk: {
       projects: { list: async () => options.projects ?? [] },
@@ -562,6 +563,7 @@ it("reuses repository discovery across list requests", async () => {
   await startTea(() => ({ json: [] }), defaultProfiles);
   const host = createFakePluginHost({
     pluginId: "gitea",
+    experimental_declaredIconNames: ["teacup"],
     settings: defaultSettings,
     sdk: {
       projects: {
@@ -852,6 +854,7 @@ it("reports a missing tea executable as a readiness problem", async () => {
   isolateTeaEnvironment(emptyDir);
   const host = createFakePluginHost({
     pluginId: "gitea",
+    experimental_declaredIconNames: ["teacup"],
     settings: defaultSettings,
     sdk: { projects: { list: async () => [] } },
   });
@@ -3127,3 +3130,67 @@ it("reports a stopped auto-fixer as inactive even when the pull request changed"
     expect(state.threads.get("auto-fixer-1")?.archivedAt).toBe(1);
   } finally { retry.controller.abort(); await retry.done; }
  });
+
+it("lists a project's Gitea branches with my pull request branches first and skips fork pull requests", async () => {
+  const path = gitSource("https://gitea.example/prefix/acme/widgets.git");
+  cleanups.push(() => rmSync(path, { recursive: true, force: true }));
+  const { host, calls } = await start(
+    ({ endpoint }) => {
+      if (endpoint.includes("/branches?"))
+        return {
+          json: [
+            { name: "main", commit: { timestamp: "2026-09-10T00:00:00Z", author: { username: "ops" } } },
+            { name: "mine", commit: { timestamp: "2026-09-05T00:00:00Z", author: { username: "dev" } } },
+            { name: "review", commit: { timestamp: "2026-09-01T00:00:00Z", author: { username: "dev" } } },
+            { name: "from-fork", commit: { timestamp: "2026-09-20T00:00:00Z", author: { username: "ops" } } },
+          ],
+        };
+      if (endpoint.includes("/pulls?"))
+        return {
+          json: [
+            {
+              number: 7,
+              html_url: "https://gitea.example/prefix/acme/widgets/pulls/7",
+              user: { login: "dev" },
+              updated_at: "2026-09-02T00:00:00Z",
+              head: { ref: "review", repo: { full_name: "acme/widgets" } },
+            },
+            {
+              number: 8,
+              html_url: "https://gitea.example/prefix/acme/widgets/pulls/8",
+              user: { login: "dev" },
+              updated_at: "2026-09-03T00:00:00Z",
+              head: { ref: "from-fork", repo: { full_name: "dev/widgets" } },
+            },
+          ],
+        };
+      return { json: [] };
+    },
+    { projects: [{ id: "project-1", sources: [{ type: "local_path", path }] }] },
+  );
+  const result = giteaRpcContract.remoteBranches.output.parse(
+    await host.harness.behavior.callRpc("remoteBranches", { projectId: "project-1" }),
+  );
+  expect(result).toEqual({
+    repo: "acme/widgets",
+    truncated: false,
+    error: null,
+    branches: [
+      {
+        name: "review",
+        group: "pull",
+        pull: { number: 7, url: "https://gitea.example/prefix/acme/widgets/pulls/7" },
+        updatedAt: "2026-09-02T00:00:00Z",
+      },
+      { name: "mine", group: "mine", pull: null, updatedAt: "2026-09-05T00:00:00Z" },
+      { name: "from-fork", group: "other", pull: null, updatedAt: "2026-09-20T00:00:00Z" },
+      { name: "main", group: "other", pull: null, updatedAt: "2026-09-10T00:00:00Z" },
+    ],
+  });
+  expect(calls.map((call) => call.endpoint)).toEqual(
+    expect.arrayContaining([
+      "/api/v1/repos/acme/widgets/branches?limit=50&page=1",
+      "/api/v1/repos/acme/widgets/pulls?state=open&limit=50&page=1",
+    ]),
+  );
+});

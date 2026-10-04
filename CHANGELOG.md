@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add a **Gitea branch** environment. Its picker lists where to work, the project's Gitea branches, and local branches. Your pull request branches come first, then your branches, then the rest. Picking a remote branch starts the thread on that branch in a new worktree, or switches an existing worktree to it.
+
 ## 1.0.5 - 2026-10-01
 
 ### Fixed

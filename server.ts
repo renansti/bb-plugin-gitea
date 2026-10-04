@@ -24,6 +24,8 @@ import {
   type RawPullDiff,
 } from "./pull-diff.js";
 import { draftTitle, isDraftTitle } from "./draft-title.js";
+import { branchRpcMethods } from "./branch-contract.js";
+import { registerBranchProvider } from "./branch-provider.js";
 import {
   archived,
   activePolicy,
@@ -444,6 +446,7 @@ export const giteaRpcContract = defineRpcContract({
     input: autoFixerExecutionSchema,
     output: autoFixerPreferencesSchema,
   },
+  ...branchRpcMethods,
 });
 
 type Repo = { repo: string; projectId: string | null; hostId?: string };
@@ -2420,7 +2423,77 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  const branchHandlers = registerBranchProvider(bb, {
+    repoFromRemote(remote) {
+      try {
+        return repositoryFromRemote(remote, cleanBaseUrl(config.baseUrl));
+      } catch {
+        return null;
+      }
+    },
+    async repoFromCheckout(path) {
+      try {
+        const { stdout } = await execFileAsync(
+          "git",
+          ["-C", path, "remote", "get-url", "origin"],
+          { timeout: 5000, maxBuffer: 4096 },
+        );
+        return repositoryFromRemote(stdout.trim(), cleanBaseUrl(config.baseUrl));
+      } catch {
+        return null;
+      }
+    },
+    login: async () => (await teaLogin()).user,
+    async readRemoteBranches(repo, signal) {
+      const base = cleanBaseUrl(config.baseUrl);
+      // Branch and pull request fields can be missing, for example the head
+      // repository of a pull request from a deleted fork.
+      const field = (value: unknown): Record<string, unknown> =>
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : {};
+      const [branches, pulls] = await Promise.all([
+        paginated(repoPath(repo, "branches"), signal),
+        paginated(repoPath(repo, "pulls?state=open"), signal),
+      ]);
+      return {
+        truncated: branches.truncated || pulls.truncated,
+        branches: branches.values.flatMap((entry) => {
+          const branch = field(entry);
+          const commit = field(branch.commit);
+          const name = text(branch.name);
+          if (!name) return [];
+          return [
+            {
+              name,
+              authors: [
+                text(field(commit.author).username),
+                text(field(commit.committer).username),
+              ].filter(Boolean),
+              updatedAt: text(commit.timestamp),
+            },
+          ];
+        }),
+        pulls: pulls.values.flatMap((entry) => {
+          const pull = field(entry);
+          const head = field(pull.head);
+          // Branches from forks live in another repository, so they cannot be checked out from origin.
+          if (repoKey(text(field(head.repo).full_name)) !== repoKey(repo)) return [];
+          return [
+            {
+              number: Number(pull.number),
+              url: safeLink(base, pull.html_url),
+              author: text(field(pull.user).login),
+              headBranch: text(head.ref),
+              updatedAt: text(pull.updated_at),
+            },
+          ];
+        }),
+      };
+    },
+  });
   const handlers = {
+    ...branchHandlers,
     status: async (
       _input,
       { experimental_signal: signal }: RpcContext = {},
