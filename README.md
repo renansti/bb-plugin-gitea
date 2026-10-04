@@ -36,7 +36,12 @@ Repositories are the union of matching project `origin` remotes and `extraRepos`
 
 ## Panel
 
-The Gitea panel has five tabs: **My PRs**, **My Issues**, **Issues**, **Pull requests**, and **Auto-fixers**. Lists filter by repository, state, and text. **My Issues** shows issues assigned to the signed-in account (not pull requests); creating an issue from that tab assigns it to you. Creating from **Issues** does not automatically assign anyone.
+The Gitea panel has three tabs: **Issues**, **Pull requests**, and **Auto-fixers**. It opens on **Issues**. Lists filter by repository, state, and text.
+
+- **Issues** has an **Assignee** filter. It shows issues assigned to the signed-in account by default; choose **All** to see every issue. A new issue is assigned to you when the filter is set to you. The tab badge always counts your open assigned issues.
+- **Pull requests** has an **Author** filter. It shows pull requests by the signed-in account by default; choose **All** to see every pull request. The tab badge always counts your open pull requests.
+
+Panel links to `my-issues`, `my-prs`, and `my-issues/new` still work. They open **Issues** or **Pull requests** with the filter set to you.
 
 An issue or pull request opens on **Conversation**, where you can:
 
@@ -53,7 +58,7 @@ The same views appear in the side panel of a BB thread linked to the item.
 
 ## Auto-fix and Auto-merge
 
-Pull request rows in **My PRs** and **Pull requests** have two independent switches, both off by default:
+Pull request rows in **Pull requests** have two independent switches, both off by default:
 
 - **Auto-fix**: fix CI failures and address review feedback. It may commit, push, rebase, reply to and resolve review comments, and mark a WIP pull request ready. It never merges.
 - **Auto-merge**: merge once permissions, branch protection, required checks, approvals, and conflicts allow. It never changes code.
@@ -68,7 +73,7 @@ While idle, an auto-fixer waits with `bb gitea pr-watch`, which checks the pull 
 
 Gitea has no native auto-merge. The auto-fixer acts with your `tea` login's permissions, and the limits above are enforced by its instructions, not by Gitea. A reported merge or close counts only when Gitea confirms it.
 
-The top of **My PRs** has **Auto-fix all** and **Auto-merge all**. When on, the plugin checks every five minutes, and immediately when switched on, and starts auto-fixers for your open pull requests that have none. The same bar picks the model for new auto-fixers.
+The top of **Pull requests** has **Auto-fix all** and **Auto-merge all**. They apply only to your own pull requests, so they are turned off while **Author** is set to **All**. When on, the plugin checks every five minutes, and immediately when switched on, and starts auto-fixers for your open pull requests that have none. The same bar picks the model for new auto-fixers.
 
 ## CLI
 
