@@ -1,7 +1,18 @@
 export type RemoteBranchGroup = "pull" | "mine" | "other";
 
-/** Pull request state shown on a branch badge. `none` is an open pull request without CI statuses. */
-export type PullStatus = "draft" | "failing" | "running" | "passing" | "none" | "merged";
+/**
+ * Pull request state shown on a branch badge. `none` is an open pull request
+ * without CI statuses. `checking` is an open pull request whose CI state is
+ * not read yet.
+ */
+export type PullStatus =
+  | "draft"
+  | "failing"
+  | "running"
+  | "passing"
+  | "none"
+  | "merged"
+  | "checking";
 
 export interface RemoteBranchInput {
   name: string;
@@ -18,6 +29,8 @@ export interface PullInput {
   headBranch: string;
   state: "open" | "merged";
   status: PullStatus;
+  /** Head commit, used to read the CI state of a `checking` pull request. */
+  sha: string;
   /** ISO time of the last pull request update. */
   updatedAt: string;
 }

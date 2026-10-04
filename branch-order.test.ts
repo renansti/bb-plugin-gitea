@@ -20,6 +20,7 @@ function pull(
     updatedAt,
     state: "open",
     status: "passing",
+    sha: `sha-${number}`,
     ...extra,
   };
 }

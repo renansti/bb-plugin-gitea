@@ -13,11 +13,16 @@ import {
 import {
   orderRemoteBranches,
   type PullInput,
+  type PullStatus,
   type RemoteBranchInput,
 } from "./branch-order.js";
 
 const HOST_TIMEOUT_MS = 15 * 60 * 1000;
 const REMOTE_BRANCH_TTL_MS = 30_000;
+/** A finished CI result for a commit rarely changes, so it is kept longer than one still running. */
+const SETTLED_CI_TTL_MS = 5 * 60_000;
+const OPEN_CI_TTL_MS = 20_000;
+const MAX_CI_READS = 60;
 const ADOPTED_RESOURCE = { adopted: true } as const;
 
 export interface RemoteBranchData {
@@ -34,6 +39,8 @@ export interface BranchProviderDeps {
   /** The signed-in Gitea user. */
   login(): Promise<string>;
   readRemoteBranches(repo: string, signal?: AbortSignal): Promise<RemoteBranchData>;
+  /** The badge state of an open pull request from its head commit's CI statuses. */
+  readCiStatus(repo: string, sha: string, signal?: AbortSignal): Promise<PullStatus>;
 }
 
 function isAdopted(resource: JsonValue | null): boolean {
@@ -79,7 +86,31 @@ export function registerBranchProvider(
     return {
       branches: orderRemoteBranches({ ...data, login }),
       truncated: data.truncated,
+      ciPulls: data.pulls
+        .filter((pull) => pull.status === "checking")
+        .slice(0, MAX_CI_READS)
+        .map(({ number, sha }) => ({ number, sha })),
     };
+  }
+
+  const ciCache = new Map<string, { expiresAt: number; value: Promise<PullStatus> }>();
+  function cachedCiStatus(repo: string, sha: string, signal?: AbortSignal) {
+    const key = `${repo}\n${sha}`;
+    const cached = ciCache.get(key);
+    if (cached && Date.now() < cached.expiresAt) return cached.value;
+    const value = deps.readCiStatus(repo, sha, signal);
+    const entry = { expiresAt: Date.now() + OPEN_CI_TTL_MS, value };
+    ciCache.set(key, entry);
+    value.then(
+      (status) => {
+        if (status === "passing" || status === "failing")
+          entry.expiresAt = Date.now() + SETTLED_CI_TTL_MS;
+      },
+      () => {
+        if (ciCache.get(key) === entry) ciCache.delete(key);
+      },
+    );
+    return value;
   }
 
   type Ordered = Awaited<ReturnType<typeof orderedBranches>>;
@@ -240,12 +271,31 @@ export function registerBranchProvider(
       if (repo === null)
         return { repo: null, branches: [], truncated: false, error: null };
       try {
-        const ordered = await cachedBranches(repo, refresh, signal);
-        return { repo, ...ordered, error: null };
+        const { branches, truncated } = await cachedBranches(repo, refresh, signal);
+        return { repo, branches, truncated, error: null };
       } catch (error) {
         if (signal?.aborted) throw error;
         return { repo, branches: [], truncated: false, error: errorMessage(error) };
       }
+    },
+    async remotePullStatuses(
+      { projectId },
+      { experimental_signal: signal }: { experimental_signal?: AbortSignal } = {},
+    ) {
+      const source = await checkoutSource(projectId, null);
+      const repo = source ? await deps.repoFromCheckout(source.path) : null;
+      if (repo === null) return { statuses: [] };
+      const { ciPulls } = await cachedBranches(repo, false, signal);
+      const statuses = await Promise.all(
+        ciPulls.map(async ({ number, sha }) => ({
+          number,
+          status: await cachedCiStatus(repo, sha, signal).catch((error: unknown) => {
+            if (signal?.aborted) throw error;
+            return "none" as const;
+          }),
+        })),
+      );
+      return { statuses };
     },
     async branchDefaultBase({ projectId, hostId }) {
       const source = await checkoutSource(projectId, hostId);

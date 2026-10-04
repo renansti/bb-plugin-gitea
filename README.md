@@ -69,7 +69,7 @@ A branch with a pull request shows a badge with its number. The color shows the 
 | Green  | CI passing |
 | Purple | Merged |
 
-The badge shows the newest open pull request for the branch, or else the newest merged one. Merged badges come from the 100 most recently updated closed pull requests. CI states are read for at most 60 open pull requests.
+The badge shows the newest open pull request for the branch, or else the newest merged one. Merged badges come from the 100 most recently updated closed pull requests. CI states load after the branch list, so badges start grey and then change color. CI states are read for at most 60 open pull requests. A passing or failing result is kept for 5 minutes per commit, and a running one for 20 seconds.
 
 With **New worktree** and no branch picked, the thread gets a new branch from the default branch. Picking a branch creates a worktree on that branch itself. The plugin fetches the branch from `origin`, then uses the local branch or creates one that tracks `origin`.
 

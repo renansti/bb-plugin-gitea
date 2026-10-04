@@ -3199,7 +3199,7 @@ it("lists a project's Gitea branches with pull request badges and skips fork pul
       {
         name: "review",
         group: "pull",
-        pull: { number: 7, url: url(7), status: "running" },
+        pull: { number: 7, url: url(7), status: "checking" },
         updatedAt: "2026-09-02T00:00:00Z",
       },
       { name: "mine", group: "mine", pull: null, updatedAt: "2026-09-05T00:00:00Z" },
@@ -3225,10 +3225,21 @@ it("lists a project's Gitea branches with pull request badges and skips fork pul
       "/api/v1/repos/acme/widgets/branches?limit=50&page=1",
       "/api/v1/repos/acme/widgets/pulls?state=open&limit=50&page=1",
       "/api/v1/repos/acme/widgets/pulls?state=closed&sort=recentupdate&limit=50&page=1",
-      "/api/v1/repos/acme/widgets/commits/sha-review/status",
     ]),
   );
-  expect(endpoints.filter((endpoint) => endpoint.includes("/status"))).toHaveLength(1);
+  const statusCalls = () => calls.filter((call) => call.endpoint.endsWith("/status"));
+  expect(statusCalls()).toHaveLength(0);
+
+  const statuses = () =>
+    host.harness.behavior
+      .callRpc("remotePullStatuses", { projectId: "project-1" })
+      .then((output) => giteaRpcContract.remotePullStatuses.output.parse(output));
+  await expect(statuses()).resolves.toEqual({ statuses: [{ number: 7, status: "running" }] });
+  expect(statusCalls().map((call) => call.endpoint)).toEqual([
+    "/api/v1/repos/acme/widgets/commits/sha-review/status",
+  ]);
+  await statuses();
+  expect(statusCalls()).toHaveLength(1);
 });
 
 it.each([

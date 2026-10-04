@@ -114,6 +114,7 @@ const PULL_BADGE: Record<PullStatus, { className: string; label: string }> = {
   running: { className: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400", label: "CI running" },
   passing: { className: "bg-green-500/15 text-green-700 dark:text-green-400", label: "CI passing" },
   merged: { className: "bg-purple-500/15 text-purple-700 dark:text-purple-400", label: "Merged" },
+  checking: { className: "bg-muted text-muted-foreground", label: "Checking CI" },
 };
 
 function PullBadge({ pull }: { pull: NonNullable<RemoteBranch["pull"]> }) {
@@ -211,6 +212,17 @@ export function GiteaBranchInputsControl({
       .catch(() => undefined);
   }, [projectId, rpc, reloadRemote]);
 
+  const loadStatuses = useCallback(
+    (key: string) => rpc.call("remotePullStatuses", { projectId: key }),
+    [rpc],
+  );
+  const [ciState, reloadStatuses] = useScoped(projectId, loadStatuses);
+  const remoteValue = remote?.value;
+  // CI states load after the branch list, so the list shows without waiting for them.
+  useEffect(() => {
+    if (remoteValue) void reloadStatuses();
+  }, [remoteValue, reloadStatuses]);
+
   const scopeKey = projectId !== null && hostId !== null ? `${projectId}\n${hostId}` : null;
   const loadWorktrees = useCallback(
     (key: string) => {
@@ -241,9 +253,19 @@ export function GiteaBranchInputsControl({
     if (open) setIntent(selectedIntent);
   }, [open, selectedIntent]);
 
-  const remoteBranches: RemoteBranch[] = (remote?.value?.branches ?? []).filter((branch) =>
-    matches(deferredQuery, branch.name, branch.pull ? `#${branch.pull.number}` : ""),
+  const ciStatus = new Map(
+    (ciState?.value?.statuses ?? []).map((entry) => [entry.number, entry.status]),
   );
+  const remoteBranches: RemoteBranch[] = (remote?.value?.branches ?? [])
+    .filter((branch) =>
+      matches(deferredQuery, branch.name, branch.pull ? `#${branch.pull.number}` : ""),
+    )
+    .map((branch) => {
+      const status = branch.pull ? ciStatus.get(branch.pull.number) : undefined;
+      return branch.pull && branch.pull.status === "checking" && status
+        ? { ...branch, pull: { ...branch.pull, status } }
+        : branch;
+    });
   const worktrees: DiscoveredWorktree[] = (worktreeState?.value?.worktrees ?? []).filter(
     (worktree) => matches(deferredQuery, worktree.path, worktree.branch ?? ""),
   );

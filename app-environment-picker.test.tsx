@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
@@ -25,6 +25,12 @@ const rpc = {
       },
       { name: "mine", group: "mine", pull: null, updatedAt: "2026-09-05T00:00:00Z" },
       {
+        name: "checked",
+        group: "other",
+        pull: { number: 5, url: "https://gitea.example/acme/widgets/pulls/5", status: "checking" },
+        updatedAt: "2026-09-01T00:00:00Z",
+      },
+      {
         name: "shipped",
         group: "other",
         pull: { number: 3, url: "https://gitea.example/acme/widgets/pulls/3", status: "merged" },
@@ -32,6 +38,7 @@ const rpc = {
       },
     ],
   }),
+  remotePullStatuses: () => ({ statuses: [{ number: 5, status: "passing" }] }),
   branchDefaultBase: () => ({ branch: "main" }),
   branchWorktrees: () => ({
     worktrees: [{ path: "/src/widgets-wt", branch: "old", locked: false, prunable: false }],
@@ -76,7 +83,8 @@ it("lists Work in, then your branches, then other branches, with no local branch
   expect(menu.queryByText("Local branch:")).toBeNull();
   expect(menu.queryByText("develop")).toBeNull();
   const rows = menu.getAllByRole("button").map((row) => row.textContent);
-  expect(rows).toEqual(["New worktree", "Existing worktree", "review#7", "mine", "shipped#3"]);
+  expect(rows).toEqual(["New worktree", "Existing worktree", "review#7", "mine", "checked#5", "shipped#3"]);
+  await waitFor(() => expect(menu.getByText("#5").getAttribute("data-status")).toBe("passing"));
   expect(menu.getByText("#7").getAttribute("data-status")).toBe("failing");
   expect(menu.getByText("#7").className).toContain("text-red-600");
   expect(menu.getByText("#3").getAttribute("title")).toBe("Pull request #3: Merged");

@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   createFakePluginHost,
   type ExperimentalFakeHostRpcCall,
@@ -38,6 +38,7 @@ function start(
     repoFromCheckout: async () => "acme/widgets",
     login: async () => "dev",
     readRemoteBranches: async () => ({ branches: [], pulls: [], truncated: false }),
+    readCiStatus: async () => "none",
     ...options.deps,
   });
   host.bb.rpc.register(branchRpcContract, handlers);
@@ -241,4 +242,53 @@ it("returns no branches for a project that is not on Gitea", async () => {
   await expect(
     host.harness.behavior.callRpc("remoteBranches", { projectId: "project-1", refresh: false }),
   ).resolves.toEqual({ repo: null, branches: [], truncated: false, error: null });
+});
+
+it("reads CI states separately and keeps finished results longer than running ones", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  disposers.push(() => void vi.useRealTimers());
+  const reads: string[] = [];
+  const results: Record<string, "passing" | "running"> = { "sha-1": "passing", "sha-2": "running" };
+  const openPull = (number: number) => ({
+    number,
+    url: `https://gitea.example/acme/widgets/pulls/${number}`,
+    author: "dev",
+    headBranch: `b${number}`,
+    state: "open" as const,
+    status: "checking" as const,
+    sha: `sha-${number}`,
+    updatedAt: "2026-09-01T00:00:00Z",
+  });
+  const { host } = start({
+    deps: {
+      readRemoteBranches: async () => ({
+        truncated: false,
+        branches: [1, 2].map((number) => ({
+          name: `b${number}`,
+          authors: [],
+          updatedAt: "2026-09-01T00:00:00Z",
+        })),
+        pulls: [openPull(1), openPull(2)],
+      }),
+      readCiStatus: async (_repo, sha) => {
+        reads.push(sha);
+        return results[sha]!;
+      },
+    },
+  });
+  const statuses = () =>
+    host.harness.behavior.callRpc("remotePullStatuses", { projectId: "project-1" });
+  await expect(
+    host.harness.behavior.callRpc("remoteBranches", { projectId: "project-1", refresh: false }),
+  ).resolves.toMatchObject({ branches: [{ pull: { status: "checking" } }, { pull: { status: "checking" } }] });
+  expect(reads).toEqual([]);
+  await expect(statuses()).resolves.toEqual({
+    statuses: [
+      { number: 1, status: "passing" },
+      { number: 2, status: "running" },
+    ],
+  });
+  vi.setSystemTime(Date.now() + 25_000);
+  await statuses();
+  expect(reads).toEqual(["sha-1", "sha-2", "sha-2"]);
 });

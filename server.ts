@@ -469,7 +469,6 @@ const maxPages = 10;
 const maxReviewCommentReads = 50;
 const maxListRepositories = 50;
 const maxMergedPullPages = 2;
-const maxPullStatusReads = 60;
 const conversationPolicy: FreshnessPolicy = {
   freshMs: 15_000,
   retainMs: 10 * 60_000,
@@ -2523,40 +2522,32 @@ export default async function plugin(bb: BbPluginApi) {
           },
         ];
       });
-      const ciChecks = pulls
-        .filter((pull) => pull.state === "open" && !pull.draft && pull.sha)
-        .slice(0, maxPullStatusReads);
-      const ciState = new Map(
-        await Promise.all(
-          ciChecks.map(async (pull) => {
-            try {
-              const combined = field(
-                await api(
-                  repoPath(repo, `commits/${encodeURIComponent(pull.sha)}/status`),
-                  { signal },
-                ),
-              );
-              return [pull.number, pullCiStatus(combined)] as const;
-            } catch (error) {
-              if (signal?.aborted) throw error;
-              return [pull.number, "none" as PullStatus] as const;
-            }
-          }),
-        ),
-      );
       return {
         truncated: branchPage.truncated || openPage.truncated,
         branches,
-        pulls: pulls.map(({ draft, sha: _sha, ...pull }) => ({
+        pulls: pulls.map(({ draft, ...pull }) => ({
           ...pull,
           status:
             pull.state === "merged"
               ? ("merged" as const)
               : draft
                 ? ("draft" as const)
-                : (ciState.get(pull.number) ?? ("none" as const)),
+                : pull.sha
+                  ? ("checking" as const)
+                  : ("none" as const),
         })),
       };
+    },
+    async readCiStatus(repo, sha, signal) {
+      const combined = await api(
+        repoPath(repo, `commits/${encodeURIComponent(sha)}/status`),
+        { signal },
+      );
+      return pullCiStatus(
+        typeof combined === "object" && combined !== null && !Array.isArray(combined)
+          ? (combined as Record<string, unknown>)
+          : {},
+      );
     },
   });
   const handlers = {

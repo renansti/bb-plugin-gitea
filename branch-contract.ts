@@ -85,6 +85,16 @@ export const giteaBranchHostContract = defineRpcContract({
   },
 });
 
+const pullStatusSchema = z.enum([
+  "draft",
+  "failing",
+  "running",
+  "passing",
+  "none",
+  "merged",
+  "checking",
+]);
+
 export const remoteBranchSchema = z
   .object({
     name: z.string().min(1),
@@ -93,7 +103,7 @@ export const remoteBranchSchema = z
       .object({
         number: z.number().int(),
         url: z.string(),
-        status: z.enum(["draft", "failing", "running", "passing", "none", "merged"]),
+        status: pullStatusSchema,
       })
       .nullable(),
     updatedAt: z.string(),
@@ -116,6 +126,16 @@ export const branchRpcMethods = {
         branches: z.array(remoteBranchSchema),
         truncated: z.boolean(),
         error: z.string().nullable(),
+      })
+      .strict(),
+  },
+  remotePullStatuses: {
+    input: z.object({ projectId: z.string().min(1) }).strict(),
+    output: z
+      .object({
+        statuses: z.array(
+          z.object({ number: z.number().int(), status: pullStatusSchema }).strict(),
+        ),
       })
       .strict(),
   },
