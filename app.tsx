@@ -76,17 +76,22 @@ type AutoFixerView = MyPulls["items"][number]["autoFixer"];
 type AutoFixerSessions = PluginRpcResult<
   (typeof giteaRpcContract)["listAutoFixerSessions"]
 >["sessions"];
-type ListView = "my-prs" | "my-issues" | "issues" | "pulls";
+type ListView = "issues" | "pulls";
 type View = ListView | "auto-fixers";
+type Person = "me" | "all";
+type People = Record<ListView, Person>;
 type Route =
   | { kind: "list"; view: View }
-  | { kind: "new-issue"; from: "issues" | "my-issues" }
+  | { kind: "new-issue" }
   | { kind: "item"; item: ItemRef };
+/** A sub-path kept for existing links. The panel shows `to` and sets the person filter of the `mine` list to the signed-in user. */
+type Redirect = { kind: "redirect"; mine: ListView; to: Route };
 type DetailSection = "conversation" | "files";
 type Status = PluginRpcResult<(typeof giteaRpcContract)["status"]>;
 type StateFilter = "open" | "closed" | "all";
 type ListFilters = {
   view: ListView;
+  person: Person;
   state: StateFilter;
   repo: string;
   query: string;
@@ -263,8 +268,17 @@ let displayMemory: DisplayMemory = {
 };
 const memoryListeners = new Set<() => void>();
 let scopeWatchers = 0;
-const panelMemory: { filters: ListFilters; preferences: Preferences | null } = {
-  filters: { view: "my-prs", state: "open", repo: "all", query: "" },
+const panelMemory: {
+  filters: Omit<ListFilters, "person"> & { people: People };
+  preferences: Preferences | null;
+} = {
+  filters: {
+    view: "issues",
+    people: { issues: "me", pulls: "me" },
+    state: "open",
+    repo: "all",
+    query: "",
+  },
   preferences: null,
 };
 
@@ -343,21 +357,23 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 }
 
 const openMyPullRequests: ListFilters = {
-  view: "my-prs",
+  view: "pulls",
+  person: "me",
   state: "open",
   repo: "all",
   query: "",
 };
 
 const openMyIssues: ListFilters = {
-  view: "my-issues",
+  view: "issues",
+  person: "me",
   state: "open",
   repo: "all",
   query: "",
 };
 
-function listKey({ view, state, repo, query }: ListFilters) {
-  return JSON.stringify([view, repo, state, query]);
+function listKey({ view, person, state, repo, query }: ListFilters) {
+  return JSON.stringify([view, person, repo, state, query]);
 }
 
 function useIsDarkTheme() {
@@ -841,24 +857,23 @@ const loading = { state: "loading" } as const;
 
 async function readItemList(
   rpc: PluginRpcClient<typeof giteaRpcContract>,
-  { view, state, repo, query }: ListFilters,
+  { view, person, state, repo, query }: ListFilters,
   refresh: boolean,
 ): Promise<ItemList> {
   const input = { state, query, refresh, ...(repo === "all" ? {} : { repo }) };
+  if (person === "all") {
+    const { account, items, truncated, errors, freshness } = await rpc.call(
+      "listItems", { kind: view === "issues" ? "issue" : "pr", ...input },
+    );
+    return { account, items, truncated, errors, freshness };
+  }
   switch (view) {
-    case "my-issues": {
+    case "issues": {
       const { account, items, truncated, errors, freshness } = await rpc.call("listMyIssues", input);
       return { account, items, truncated, errors, freshness };
     }
-    case "my-prs": {
-      const { account, items, truncated, errors, freshness } = await rpc.call("listMyPullRequests", input);
-      return { account, items, truncated, errors, freshness };
-    }
-    case "issues":
     case "pulls": {
-      const { account, items, truncated, errors, freshness } = await rpc.call(
-        "listItems", { kind: view === "issues" ? "issue" : "pr", ...input },
-      );
+      const { account, items, truncated, errors, freshness } = await rpc.call("listMyPullRequests", input);
       return { account, items, truncated, errors, freshness };
     }
   }
@@ -873,7 +888,7 @@ function useItemList(
 ) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const key = enabled ? listKey(filters) : null;
-  const { view, state, repo, query } = filters;
+  const { view, person, state, repo, query } = filters;
   const { epoch } = memory;
   const [failure, setFailure] = useState<{
     key: string;
@@ -891,7 +906,7 @@ function useItemList(
       try {
         const list = await readItemList(
           rpc,
-          { view, state, repo, query },
+          { view, person, state, repo, query },
           refresh,
         );
         if (current !== run.current) return;
@@ -909,7 +924,7 @@ function useItemList(
       }
       setPending(null);
     },
-    [key, rpc, view, state, repo, query, epoch, onFailure],
+    [key, rpc, view, person, state, repo, query, epoch, onFailure],
   );
   useEffect(() => {
     void load(false);
@@ -1422,15 +1437,14 @@ function ChangedFiles({
   );
 }
 
-function parseRoute(subPath: string): Route | null {
+function parseRoute(subPath: string): Route | Redirect | null {
   switch (subPath) {
-    case "": case "my-prs": return { kind: "list", view: "my-prs" };
-    case "my-issues": return { kind: "list", view: "my-issues" };
-    case "auto-fixers": return { kind: "list", view: "auto-fixers" };
-    case "issues": return { kind: "list", view: "issues" };
-    case "pulls": return { kind: "list", view: "pulls" };
-    case "new": return { kind: "new-issue", from: "issues" };
-    case "my-issues/new": return { kind: "new-issue", from: "my-issues" };
+    case "": return { kind: "list", view: panelTabs[0]!.id };
+    case "auto-fixers": case "issues": case "pulls": return { kind: "list", view: subPath };
+    case "new": return { kind: "new-issue" };
+    case "my-issues": return { kind: "redirect", mine: "issues", to: { kind: "list", view: "issues" } };
+    case "my-prs": return { kind: "redirect", mine: "pulls", to: { kind: "list", view: "pulls" } };
+    case "my-issues/new": return { kind: "redirect", mine: "issues", to: { kind: "new-issue" } };
   }
   const match = /^(issues|pulls)\/([^/]+)\/([^/]+)\/([1-9]\d*)$/.exec(subPath);
   if (!match)
@@ -1443,7 +1457,7 @@ function parseRoute(subPath: string): Route | null {
 function routePath(route: Route): string {
   switch (route.kind) {
     case "list": return route.view;
-    case "new-issue": return route.from === "my-issues" ? "my-issues/new" : "new";
+    case "new-issue": return "new";
     case "item": return `${route.item.kind === "pr" ? "pulls" : "issues"}/${route.item.repo}/${route.item.number}`;
   }
 }
@@ -1660,7 +1674,7 @@ function AgentExecutionControl() {
   );
 }
 
-function AutoFixerPreferencesControl() {
+function AutoFixerPreferencesControl({ disabled = false }: { disabled?: boolean }) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const [loaded, setLoaded] = useState<Loadable<Preferences>>(() =>
     panelMemory.preferences
@@ -1737,7 +1751,10 @@ function AutoFixerPreferencesControl() {
   const execution: ExperimentalProviderModelPickerValue = preferences.execution;
   const fields = { fix: "autoFix", merge: "autoMerge" } as const;
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+    <div
+      title={disabled ? "These settings apply to your own pull requests. Set Author to you to change them." : undefined}
+      className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground"
+    >
       {automationToggles.map(({ option, label, description }) => {
         const field = fields[option];
         return (
@@ -1749,7 +1766,7 @@ function AutoFixerPreferencesControl() {
             <input
               type="checkbox"
               checked={preferences[field]}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(event) => {
                 const enabled = event.target.checked;
                 void save(
@@ -1764,7 +1781,7 @@ function AutoFixerPreferencesControl() {
       })}
       <ProviderModelPicker
         value={execution}
-        disabled={saving}
+        disabled={saving || disabled}
         align="end"
         onChange={(value) => {
           const next = {
@@ -1817,7 +1834,7 @@ function AutoFixerList() {
   if (!sessions.value.length)
     return (
       <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
-        No auto-fixers yet. Turn on Auto-fix or Auto-merge from My PRs.
+        No auto-fixers yet. Turn on Auto-fix or Auto-merge from Pull requests.
       </div>
     );
   return (
@@ -1861,27 +1878,79 @@ function AutoFixerList() {
   );
 }
 
-const viewLabels: Record<View, string> = {
-  "my-prs": "My PRs",
-  "my-issues": "My Issues",
-  "auto-fixers": "Auto-fixers",
-  issues: "Issues",
-  pulls: "Pull requests",
-};
+type PanelTab =
+  | {
+      id: ListView;
+      label: string;
+      renders: "items";
+      /** Label of the person filter: the issue assignee or the pull request author. */
+      person: "Assignee" | "Author";
+      /** Whether the tab shows the Auto-fix all, Auto-merge all, and model controls. */
+      automation: boolean;
+    }
+  | { id: "auto-fixers"; label: string; renders: "auto-fixers" };
+
+/** The panel's tabs in display order. The tab bar renders only these, and the panel opens on the first one. */
+const panelTabs: readonly PanelTab[] = [
+  { id: "issues", label: "Issues", renders: "items", person: "Assignee", automation: false },
+  { id: "pulls", label: "Pull requests", renders: "items", person: "Author", automation: true },
+  { id: "auto-fixers", label: "Auto-fixers", renders: "auto-fixers" },
+];
+
+function tabLabel(view: View) {
+  return panelTabs.find((tab) => tab.id === view)?.label ?? "Back";
+}
+
+/** Shows items for the signed-in user or for everyone. */
+function PersonFilter({
+  label,
+  login,
+  value,
+  onChange,
+}: {
+  label: string;
+  login: string | null;
+  value: Person;
+  onChange: (value: Person) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next as Person)}>
+      <SelectTrigger aria-label={label} className="w-44">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="me">{`${label}: ${login ?? "me"}`}</SelectItem>
+        <SelectItem value="all">{`${label}: All`}</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
 
 function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const navigate = useBbNavigate();
-  const route = useMemo(() => parseRoute(subPath), [subPath]);
+  const parsed = useMemo(() => parseRoute(subPath), [subPath]);
+  const route = parsed?.kind === "redirect" ? parsed.to : parsed;
   const [view, setView] = useState<View>(route?.kind === "list" ? route.view : panelMemory.filters.view);
   const listView = view === "auto-fixers" ? panelMemory.filters.view : view;
+  const [people, setPeople] = useState<People>(() =>
+    parsed?.kind === "redirect"
+      ? { ...panelMemory.filters.people, [parsed.mine]: "me" }
+      : panelMemory.filters.people,
+  );
+  const person = people[listView];
   const [state, setState] = useState(panelMemory.filters.state);
   const [repo, setRepo] = useState(panelMemory.filters.repo);
   const [query, setQuery] = useState(panelMemory.filters.query);
   const searchQuery = useDebouncedValue(query, 250);
   useEffect(() => {
-    panelMemory.filters = { view: listView, state, repo, query: searchQuery };
-  }, [view, state, repo, searchQuery]);
+    panelMemory.filters = { view: listView, people, state, repo, query: searchQuery };
+  }, [view, people, state, repo, searchQuery]);
+  useEffect(() => {
+    if (parsed?.kind !== "redirect") return;
+    setPeople((current) => ({ ...current, [parsed.mine]: "me" }));
+    navigate.toPluginPanel("gitea", { subPath: routePath(parsed.to), replace: true });
+  }, [navigate, parsed]);
   const settings = useScopeWatch();
   const memory = useDisplayMemory();
   const status = trustedStatus(memory, settings);
@@ -1896,7 +1965,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   }, [rpc]);
   const verify = useCallback(() => void loadStatus(), [loadStatus]);
   const itemList = useItemList(
-    { view: listView, state, repo, query: searchQuery },
+    { view: listView, person, state, repo, query: searchQuery },
     memory,
     settings,
     verify,
@@ -1905,7 +1974,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const { list, load: loadList } = itemList;
   const openMine = useItemList(openMyPullRequests, memory, settings, verify);
   const openIssues = useItemList(openMyIssues, memory, settings, verify);
-  const fromMyIssues = route?.kind === "new-issue" && route.from === "my-issues";
+  const assignToMe = people.issues === "me";
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
   const [creatingIssue, setCreatingIssue] = useState(false);
@@ -1948,7 +2017,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     void loadStatus();
   }, [loadStatus, epoch]);
   const reloadAutoFixers = useCallback(() => {
-    if (view === "my-prs" || view === "pulls") void loadItems();
+    if (view === "pulls") void loadItems();
   }, [loadItems, view]);
   useRealtime("auto-fixer-changed", useCoalesced(reloadAutoFixers, 500));
   const openItem = useCallback(
@@ -1967,7 +2036,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     if (route?.kind !== "item") {
       if (route?.kind === "list") setView(route.view);
-      else if (route?.kind === "new-issue") setView(route.from);
+      else if (route?.kind === "new-issue") setView("issues");
       return;
     }
     setDetailSection("conversation");
@@ -2088,7 +2157,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
         repo,
         title: newTitle,
         body: newBody,
-        assignToMe: fromMyIssues,
+        assignToMe,
       });
       setNewTitle("");
       setNewBody("");
@@ -2103,7 +2172,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
       creatingIssueRef.current = false;
       setCreatingIssue(false);
     }
-  }, [fromMyIssues, loadItems, newBody, newTitle, openItem, repo, rpc]);
+  }, [assignToMe, loadItems, newBody, newTitle, openItem, repo, rpc]);
 
   const shownList = list.state === "ready" ? list.value : null;
   const visibleItems = shownList?.items ?? [];
@@ -2115,6 +2184,9 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     openIssues.list.state === "ready"
       ? `${openIssues.list.value.items.length}${openIssues.list.value.truncated ? "+" : ""}`
       : undefined;
+  const badges: Partial<Record<View, string>> = { issues: issueCount, pulls: count };
+  const tab = panelTabs.find((entry) => entry.id === view);
+  const login = status?.state === "connected" ? status.login : null;
   if (newIssue) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm md:p-5">
@@ -2125,12 +2197,10 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               variant="ghost"
               className="h-7 px-2"
               onClick={() => {
-                navigate.toPluginPanel("gitea", {
-                  subPath: fromMyIssues ? "my-issues" : "issues",
-                });
+                navigate.toPluginPanel("gitea", { subPath: "issues" });
               }}
             >
-              ← {fromMyIssues ? "My Issues" : "Issues"}
+              ← {tabLabel("issues")}
             </Button>
             <span>New issue</span>
           </div>
@@ -2231,7 +2301,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               className="h-7 px-2"
               onClick={() => navigate.toPluginPanel("gitea", { subPath: view })}
             >
-              ← {viewLabels[view]}
+              ← {tabLabel(view)}
             </Button>
             <span className="min-w-0 truncate">
               {detail.repo} · #{detail.number}
@@ -2538,32 +2608,25 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
             }}
           >
             <TabsList>
-              <TabsTrigger value="my-prs" className="gap-1.5">
-                My PRs
-                {count === undefined ? null : (
-                  <Badge variant="secondary">{count}</Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="my-issues" className="gap-1.5">
-                My Issues
-                {issueCount === undefined ? null : (
-                  <Badge variant="secondary">{issueCount}</Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="auto-fixers">Auto-fixers</TabsTrigger>
-              <TabsTrigger value="issues">Issues</TabsTrigger>
-              <TabsTrigger value="pulls">Pull requests</TabsTrigger>
+              {panelTabs.map(({ id, label }) => (
+                <TabsTrigger key={id} value={id} className="gap-1.5">
+                  {label}
+                  {badges[id] === undefined ? null : (
+                    <Badge variant="secondary">{badges[id]}</Badge>
+                  )}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
           <span className="flex-1" />
           <Button size="sm" variant="outline" onClick={() => void refresh()}>
             Refresh
           </Button>
-          {(view === "issues" || view === "my-issues") && (
+          {view === "issues" && (
             <Button
               size="sm"
               onClick={() =>
-                navigate.toPluginPanel("gitea", { subPath: routePath({ kind: "new-issue", from: view === "my-issues" ? "my-issues" : "issues" }) })
+                navigate.toPluginPanel("gitea", { subPath: routePath({ kind: "new-issue" }) })
               }
             >
               New issue
@@ -2587,14 +2650,24 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               ))}
             </div>
           )}
-          {(view === "my-prs" || view === "auto-fixers") && (
+          {tab?.renders === "auto-fixers" ? (
             <AutoFixerPreferencesControl />
-          )}
-          {view === "auto-fixers" ? (
+          ) : tab?.automation ? (
+            <AutoFixerPreferencesControl disabled={person !== "me"} />
+          ) : null}
+          {tab?.renders === "auto-fixers" ? (
             <AutoFixerList />
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">
+                {tab && (
+                  <PersonFilter
+                    label={tab.person}
+                    login={login}
+                    value={person}
+                    onChange={(next) => setPeople((current) => ({ ...current, [tab.id]: next }))}
+                  />
+                )}
                 <Select value={repo} onValueChange={setRepo}>
                   <SelectTrigger className="w-52">
                     <SelectValue placeholder="All repositories" />
@@ -2719,11 +2792,11 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
                     ))
                   ) : (
                     <div className="p-8 text-center text-muted-foreground">
-                      {(view === "my-prs" || view === "my-issues") && status?.state !== "connected"
+                      {person === "me" && status?.state !== "connected"
                         ? "Install tea and sign in with a matching Gitea login profile to see your pull requests."
-                        : view === "my-prs"
+                        : person === "me" && view === "pulls"
                           ? "No pull requests authored by you in tracked repositories."
-                          : view === "my-issues"
+                          : person === "me"
                             ? "No issues assigned to you in tracked repositories."
                           : repoOptions.length
                             ? "No matching items."

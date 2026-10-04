@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 afterEach(() => cleanup());
@@ -35,20 +35,29 @@ const list = {
   freshness,
 };
 
-it.each([false, true])("shows the My Issues badge and opens assigned issues (truncated: %s)", async (truncated) => {
-  renderSlot(app.navPanels[0]!, { subPath: "" }, {
+const preferences = {
+  autoFix: false,
+  autoMerge: false,
+  execution: {
+    providerId: "codex",
+    model: "gpt-5.6-luna",
+    reasoningLevel: "medium",
+    serviceTier: "default",
+  },
+};
+
+function choose(filter: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: filter }));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
+it.each([false, true])("opens on Issues assigned to you and keeps the badge on that count (truncated: %s)", async (truncated) => {
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
     rpc: {
       status: () => ({ state: "connected", login: "dev", account, repos: [] }),
-      getAutoFixerPreferences: () => ({
-        autoFix: false,
-        autoMerge: false,
-        execution: {
-          providerId: "codex",
-          model: "gpt-5.6-luna",
-          reasoningLevel: "medium",
-          serviceTier: "default",
-        },
-      }),
+      getAutoFixerPreferences: () => preferences,
       listMyPullRequests: () => ({ ...list, items: [], login: "dev" }),
       listMyIssues: () => ({
         ...list,
@@ -56,42 +65,67 @@ it.each([false, true])("shows the My Issues badge and opens assigned issues (tru
         items: [{ ...item, number: 7, kind: "issue", title: "Assigned issue", assignees: ["dev"] }],
         login: "dev",
       }),
+      listItems: () => ({
+        ...list,
+        items: [{ ...item, number: 8, kind: "issue", title: "Someone else's issue", assignees: ["other"] }],
+      }),
     },
   });
-  expect(screen.getByRole("tab", { name: /My PRs/ }).getAttribute("aria-selected"))
-    .toBe("true");
-  const issuesTab = await screen.findByRole("tab", { name: `My Issues 1${truncated ? "+" : ""}` });
-  fireEvent.mouseDown(issuesTab, { button: 0 });
+  const badge = `Issues 1${truncated ? "+" : ""}`;
+  expect((await screen.findByRole("tab", { name: badge })).getAttribute("aria-selected")).toBe("true");
+  expect(screen.queryByRole("tab", { name: /My/ })).toBeNull();
   expect(await screen.findByText("Assigned issue")).toBeTruthy();
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /My PRs/ }), { button: 0 });
+  expect(screen.getByRole("combobox", { name: "Assignee" }).textContent).toBe("Assignee: dev");
+  choose("Assignee", "Assignee: All");
+  expect(await screen.findByText("Someone else's issue")).toBeTruthy();
+  expect(slot.rpcCalls.find((call) => call.method === "listItems")?.input).toMatchObject({ kind: "issue" });
+  expect(screen.getByRole("tab", { name: badge })).toBeTruthy();
+  choose("Assignee", "Assignee: dev");
+  expect(await screen.findByText("Assigned issue")).toBeTruthy();
+  Element.prototype.scrollIntoView = scrollIntoView;
 });
 
-it("shows Auto-fix and Auto-merge controls for a Pull requests row", async () => {
+it("lists tabs in the order Issues, Pull requests, Auto-fixers", () => {
   renderSlot(app.navPanels[0]!, { subPath: "" }, {
     rpc: {
       status: () => ({ state: "connected", login: "dev", account, repos: [] }),
-      getAutoFixerPreferences: () => ({
-        autoFix: false,
-        autoMerge: false,
-        execution: {
-          providerId: "codex",
-          model: "gpt-5.6-luna",
-          reasoningLevel: "medium",
-          serviceTier: "default",
-        },
-      }),
+      getAutoFixerPreferences: () => preferences,
+      listMyPullRequests: () => ({ ...list, items: [], login: "dev" }),
+      listMyIssues: () => ({ ...list, items: [], login: "dev" }),
+    },
+  });
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent))
+    .toEqual(["Issues", "Pull requests", "Auto-fixers"]);
+});
+
+it("shows Auto-fix and Auto-merge controls for a Pull requests row and turns off the bulk controls for All", async () => {
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  const slot = renderSlot(app.navPanels[0]!, { subPath: "pulls" }, {
+    rpc: {
+      status: () => ({ state: "connected", login: "dev", account, repos: [] }),
+      getAutoFixerPreferences: () => preferences,
+      listMyIssues: () => ({ ...list, items: [], login: "dev" }),
       listMyPullRequests: () => ({ ...list, items: [], login: "dev" }),
       listItems: () => list,
     },
   });
-  fireEvent.mouseDown(screen.getByRole("tab", { name: "Pull requests" }), {
-    button: 0,
-  });
+  const autoFixAll = await screen.findByRole("checkbox", { name: "Auto-fix all" });
+  expect(autoFixAll.hasAttribute("disabled")).toBe(false);
+  expect(await screen.findByText("No pull requests authored by you in tracked repositories.")).toBeTruthy();
+  choose("Author", "Author: All");
   expect(await screen.findByText(item.title)).toBeTruthy();
+  expect(slot.rpcCalls.find((call) => call.method === "listItems")?.input).toMatchObject({ kind: "pr" });
+  expect(screen.getByRole("checkbox", { name: "Auto-fix all" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("checkbox", { name: "Auto-merge all" }).hasAttribute("disabled")).toBe(true);
   const controls = screen.getByTestId("auto-fixer-controls");
   expect(controls.querySelectorAll("button")).toHaveLength(2);
   expect(controls.textContent).toContain("Auto-fix");
   expect(controls.textContent).toContain("Auto-merge");
+  choose("Author", "Author: dev");
+  expect(await screen.findByText("No pull requests authored by you in tracked repositories.")).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "Auto-fix all" }).hasAttribute("disabled")).toBe(false);
+  Element.prototype.scrollIntoView = scrollIntoView;
 });
 
 it("disables metadata suggestions while the save is pending", async () => {

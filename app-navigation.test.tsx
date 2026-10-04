@@ -111,7 +111,7 @@ async function visit(
 ) {
   const slot = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -184,11 +184,11 @@ async function showQuery(query: string, rows: string[]) {
   for (const row of rows) expect(await screen.findByText(row)).toBeTruthy();
 }
 
-it("repaints remembered My PRs rows at once after visiting a thread, then applies one refresh", async () => {
+it("repaints remembered Pull requests rows at once after visiting a thread, then applies one refresh", async () => {
   await watchScope();
   const firstVisit = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -214,7 +214,7 @@ it("repaints remembered My PRs rows at once after visiting a thread, then applie
   const list = held();
   const returned = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -236,7 +236,7 @@ it("repaints remembered My PRs rows at once after visiting a thread, then applie
   expect(screen.getByLabelText("Turn on Auto-fix")).toBeTruthy();
   expect(search().value).toBe("faster");
   expect(
-    screen.getByRole("tab", { name: /My PRs/ }).getAttribute("aria-selected"),
+    screen.getByRole("tab", { name: /Pull requests/ }).getAttribute("aria-selected"),
   ).toBe("true");
   expect(freshness()).toBe("refreshing");
   await waitFor(() =>
@@ -258,7 +258,7 @@ it("never shows another filter's rows and ignores a slower earlier filter reply"
   const slow = held();
   renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       rpc: {
         status: () => status(),
@@ -292,7 +292,7 @@ it("keeps rows through a failed background refresh and rereads only on a list ch
   });
   const slot = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       rpc: {
         status: () => status(),
@@ -322,7 +322,7 @@ it("keeps rows through a failed background refresh and rereads only on a list ch
 it("drops remembered rows for another account, forgotten display data, and a lost login", async () => {
   const first = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       rpc: {
         status: () => status(),
@@ -338,7 +338,7 @@ it("drops remembered rows for another account, forgotten display data, and a los
   let rejected = false;
   const slot = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       rpc: {
         status: () => status(ops),
@@ -383,7 +383,7 @@ it("drops remembered rows for another account, forgotten display data, and a los
 
   renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       rpc: {
         status: () => status(ops),
@@ -411,7 +411,7 @@ it("never shows the previous account's rows when the server clears display data 
   const list = held();
   renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -445,7 +445,7 @@ it("never shows remembered rows after the plugin settings change while the panel
   const list = held();
   renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings: extraSettings,
       rpc: {
@@ -481,7 +481,7 @@ it.each(["server display invalidation", "settings change"])(
     let listCallsCount = 0;
     const slot = renderSlot(
       panel,
-      { subPath: "" },
+      { subPath: "pulls" },
       {
         settings,
         rpc: {
@@ -534,7 +534,7 @@ it("forgets every remembered filter on an auth rejection and ignores a reply tha
   const scope = await watchScope();
   const first = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -559,7 +559,7 @@ it("forgets every remembered filter on an auth rejection and ignores a reply tha
   };
   const returned = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -594,7 +594,7 @@ it("forgets every remembered filter on an auth rejection and ignores a reply tha
   await scope.setRealtimeConnectionState("connected");
   renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
@@ -620,7 +620,7 @@ it("confirms the account before repainting remembered rows after a realtime reco
   const shown = recordShown("Remembered row");
   const returned = renderSlot(
     panel,
-    { subPath: "" },
+    { subPath: "pulls" },
     {
       settings,
       rpc: {
