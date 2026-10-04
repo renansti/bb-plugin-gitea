@@ -11,10 +11,12 @@ import {
 import {
   definePluginApp,
   experimental_ProviderModelPicker as ProviderModelPicker,
+  experimental_usePluginId,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSdk,
   useSettings,
   Markdown,
   UrlLink,
@@ -53,6 +55,13 @@ import {
   fileCounts,
   fileLabel,
 } from "./pull-files-view.js";
+import {
+  formatTabIds,
+  moveTab,
+  parseHiddenTabs,
+  parseTabOrder,
+  tabLayoutSettings,
+} from "./panel-tabs.js";
 
 type Item = PluginRpcResult<
   (typeof giteaRpcContract)["listItems"]
@@ -77,7 +86,7 @@ type AutoFixerSessions = PluginRpcResult<
   (typeof giteaRpcContract)["listAutoFixerSessions"]
 >["sessions"];
 type ListView = "issues" | "pulls";
-type View = ListView | "auto-fixers";
+type View = ListView | "auto-fixers" | "settings";
 type Person = "me" | "all";
 type People = Record<ListView, Person>;
 type Route =
@@ -305,15 +314,16 @@ async function verifyScope(rpc: PluginRpcClient<typeof giteaRpcContract>) {
   dispatch({ type: "status", epoch, status: await rpc.call("status", null) });
 }
 
+/** Identifies the settings that decide what Gitea data the panel shows. The tab layout is left out. */
 function settingsKey(
   values: Record<string, string | number | boolean> | undefined,
 ) {
   return values === undefined
     ? null
     : JSON.stringify(
-        Object.entries(values).sort(([left], [right]) =>
-          left.localeCompare(right),
-        ),
+        Object.entries(values)
+          .filter(([key]) => !tabLayoutSettings.includes(key))
+          .sort(([left], [right]) => left.localeCompare(right)),
       );
 }
 
@@ -1437,10 +1447,11 @@ function ChangedFiles({
   );
 }
 
-function parseRoute(subPath: string): Route | Redirect | null {
+/** `home` is the tab the panel opens on when the sub-path is empty. */
+function parseRoute(subPath: string, home: View): Route | Redirect | null {
   switch (subPath) {
-    case "": return { kind: "list", view: panelTabs[0]!.id };
-    case "auto-fixers": case "issues": case "pulls": return { kind: "list", view: subPath };
+    case "": return { kind: "list", view: home };
+    case "auto-fixers": case "issues": case "pulls": case "settings": return { kind: "list", view: subPath };
     case "new": return { kind: "new-issue" };
     case "my-issues": return { kind: "redirect", mine: "issues", to: { kind: "list", view: "issues" } };
     case "my-prs": return { kind: "redirect", mine: "pulls", to: { kind: "list", view: "pulls" } };
@@ -1888,14 +1899,67 @@ type PanelTab =
       /** Whether the tab shows the Auto-fix all, Auto-merge all, and model controls. */
       automation: boolean;
     }
-  | { id: "auto-fixers"; label: string; renders: "auto-fixers" };
+  | { id: "auto-fixers"; label: string; renders: "auto-fixers" }
+  | { id: "settings"; label: string; renders: "settings" };
 
-/** The panel's tabs in display order. The tab bar renders only these, and the panel opens on the first one. */
+/**
+ * The panel's tabs in their default order. The tab bar renders only these.
+ * The `tabOrder` and `hiddenTabs` settings change their order and hide them.
+ */
 const panelTabs: readonly PanelTab[] = [
   { id: "issues", label: "Issues", renders: "items", person: "Assignee", automation: false },
   { id: "pulls", label: "Pull requests", renders: "items", person: "Author", automation: true },
   { id: "auto-fixers", label: "Auto-fixers", renders: "auto-fixers" },
+  { id: "settings", label: "Settings", renders: "settings" },
 ];
+
+type SettingValues = Record<string, string | number | boolean>;
+type TabLayout = {
+  /** Every tab in the saved order. */
+  order: PanelTab[];
+  hidden: ReadonlySet<View>;
+  /** The tabs in the tab bar. Never empty, because the Settings tab cannot be hidden. */
+  shown: PanelTab[];
+};
+
+function tabLayout(tabOrder: unknown, hiddenTabs: unknown): TabLayout {
+  const byId = new Map(panelTabs.map((tab) => [tab.id, tab]));
+  const order = parseTabOrder(
+    panelTabs.map((tab) => tab.id),
+    typeof tabOrder === "string" ? tabOrder : "",
+  ).map((id) => byId.get(id)!);
+  const hidden = parseHiddenTabs<View>(
+    panelTabs.filter((tab) => tab.renders !== "settings").map((tab) => tab.id),
+    typeof hiddenTabs === "string" ? hiddenTabs : "",
+  );
+  return { order, hidden, shown: order.filter((tab) => !hidden.has(tab.id)) };
+}
+
+/** Plugin setting values, with saved changes shown before the host reports them. */
+function usePluginSettings() {
+  const sdk = useSdk();
+  const pluginId = experimental_usePluginId();
+  const { values } = useSettings();
+  const [pending, setPending] = useState<SettingValues>({});
+  const reported = JSON.stringify(values ?? null);
+  useEffect(() => setPending({}), [reported]);
+  const update = useCallback(
+    async (next: SettingValues) => {
+      setPending((current) => ({ ...current, ...next }));
+      try {
+        await sdk.plugins.updateSettings({ pluginId, values: next });
+      } catch (error) {
+        setPending((current) =>
+          Object.fromEntries(Object.entries(current).filter(([key]) => !(key in next))),
+        );
+        toast.error(error instanceof Error ? error.message : "Could not save the setting");
+      }
+    },
+    [sdk, pluginId],
+  );
+  const merged = useMemo(() => ({ ...values, ...pending }), [values, pending]);
+  return { values: merged, update };
+}
 
 function tabLabel(view: View) {
   return panelTabs.find((tab) => tab.id === view)?.label ?? "Back";
@@ -1926,13 +1990,245 @@ function PersonFilter({
   );
 }
 
+/**
+ * Lists the tabs in order. Each tab moves by dragging its handle with a mouse,
+ * pen, or finger, or by focusing the handle and pressing the up or down arrow key.
+ */
+function TabOrderList({
+  layout,
+  onReorder,
+  onToggle,
+}: {
+  layout: TabLayout;
+  onReorder: (order: View[]) => void;
+  onToggle: (id: View, shown: boolean) => void;
+}) {
+  const saved = useMemo(() => layout.order.map((tab) => tab.id), [layout.order]);
+  const [drag, setDrag] = useState<{ id: View; order: View[] } | null>(null);
+  const rows = useRef(new Map<View, HTMLLIElement>());
+  const handles = useRef(new Map<View, HTMLButtonElement>());
+  const refocus = useRef<View | null>(null);
+  const order = drag?.order ?? saved;
+  useEffect(() => {
+    if (refocus.current) handles.current.get(refocus.current)?.focus();
+    refocus.current = null;
+  }, [saved]);
+  const move = (id: View, index: number) => {
+    const next = moveTab(saved, id, index);
+    if (formatTabIds(next) === formatTabIds(saved)) return;
+    refocus.current = id;
+    onReorder(next);
+  };
+  const dropIndex = (dragged: View, clientY: number) =>
+    order.filter((id) => {
+      const box = id === dragged ? null : rows.current.get(id)?.getBoundingClientRect();
+      return box ? box.top + box.height / 2 < clientY : false;
+    }).length;
+  return (
+    <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+      {order.map((id, index) => {
+        const tab = panelTabs.find((entry) => entry.id === id)!;
+        return (
+          <li
+            key={id}
+            ref={(row) => {
+              if (row) rows.current.set(id, row);
+              else rows.current.delete(id);
+            }}
+            className={`flex items-center gap-3 px-3 py-2 ${drag?.id === id ? "bg-muted/50" : ""}`}
+          >
+            <button
+              type="button"
+              ref={(handle) => {
+                if (handle) handles.current.set(id, handle);
+                else handles.current.delete(id);
+              }}
+              aria-label={`Move ${tab.label}`}
+              aria-description={`Position ${index + 1} of ${order.length}. Press the up or down arrow key to move it.`}
+              className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted active:cursor-grabbing"
+              onKeyDown={(event) => {
+                const offset = { ArrowUp: -1, ArrowDown: 1 }[event.key];
+                if (offset === undefined) return;
+                event.preventDefault();
+                move(id, index + offset);
+              }}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+                setDrag({ id, order: saved });
+              }}
+              onPointerMove={(event) => {
+                if (drag?.id !== id) return;
+                const next = moveTab(drag.order, id, dropIndex(id, event.clientY));
+                if (formatTabIds(next) !== formatTabIds(drag.order)) setDrag({ id, order: next });
+              }}
+              onPointerUp={() => {
+                if (drag?.id !== id) return;
+                setDrag(null);
+                if (formatTabIds(drag.order) !== formatTabIds(saved)) onReorder(drag.order);
+              }}
+              onPointerCancel={() => setDrag(null)}
+            >
+              <Icon name="GripVertical" className="size-4" aria-hidden />
+            </button>
+            <span className="min-w-0 flex-1 truncate">{tab.label}</span>
+            {tab.renders === "settings" ? (
+              <span className="text-xs text-muted-foreground">Always shown</span>
+            ) : (
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label={`Show ${tab.label}`}
+                checked={!layout.hidden.has(id)}
+                onChange={(event) => onToggle(id, event.target.checked)}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+type SettingSchema = Awaited<
+  ReturnType<ReturnType<typeof useSdk>["plugins"]["getSettings"]>
+>["schema"];
+
+/**
+ * Shows every switch and select setting the plugin defines, using the labels
+ * and descriptions from its setting definitions. Text and number settings,
+ * such as the Gitea URL and cache sizes, stay in BB's plugin settings.
+ */
+function PluginSettingFields({
+  values,
+  onChange,
+}: {
+  values: SettingValues;
+  onChange: (values: SettingValues) => void;
+}) {
+  const sdk = useSdk();
+  const pluginId = experimental_usePluginId();
+  const [schema, setSchema] = useState<Loadable<SettingSchema>>(loading);
+  useEffect(() => {
+    let current = true;
+    sdk.plugins.getSettings({ pluginId }).then(
+      (result) => {
+        if (current) setSchema({ state: "ready", value: result.schema });
+      },
+      (error: unknown) => {
+        if (current)
+          setSchema({
+            state: "error",
+            message: error instanceof Error ? error.message : "Could not load the plugin settings",
+          });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [sdk, pluginId]);
+  const fields = schema.state === "ready"
+    ? Object.entries(schema.value).flatMap(([key, definition]) =>
+        definition.type === "boolean" || definition.type === "select"
+          ? [{ key, definition, value: values[key] ?? definition.default }]
+          : [],
+      )
+    : [];
+  if (schema.state === "ready" && !fields.length) return null;
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold text-muted-foreground">Panel</h3>
+      {schema.state === "loading" ? (
+        <Skeleton className="h-16 w-full" />
+      ) : schema.state === "error" ? (
+        <div className="text-xs text-muted-foreground">{schema.message}</div>
+      ) : (
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+          {fields.map(({ key, definition, value }) => (
+            <li key={key} className="flex items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div>{definition.label}</div>
+                {definition.description && (
+                  <div className="text-xs text-muted-foreground">{definition.description}</div>
+                )}
+              </div>
+              {definition.type === "boolean" ? (
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label={definition.label}
+                  checked={value === true}
+                  onChange={(event) => onChange({ [key]: event.target.checked })}
+                />
+              ) : (
+                <Select
+                  value={typeof value === "string" ? value : undefined}
+                  onValueChange={(next) => onChange({ [key]: next })}
+                >
+                  <SelectTrigger aria-label={definition.label} className="w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {definition.options.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PanelSettings({
+  layout,
+  values,
+  onChange,
+}: {
+  layout: TabLayout;
+  values: SettingValues;
+  onChange: (values: SettingValues) => void;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-muted-foreground">Tabs</h3>
+        <TabOrderList
+          layout={layout}
+          onReorder={(order) => onChange({ tabOrder: formatTabIds(order) })}
+          onToggle={(id, shown) => {
+            const hidden = new Set(layout.hidden);
+            if (shown) hidden.delete(id);
+            else hidden.add(id);
+            onChange({ hiddenTabs: formatTabIds(hidden) });
+          }}
+        />
+      </section>
+      <PluginSettingFields values={values} onChange={onChange} />
+    </div>
+  );
+}
+
 function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const navigate = useBbNavigate();
-  const parsed = useMemo(() => parseRoute(subPath), [subPath]);
+  const { values: settingValues, update: updateSettings } = usePluginSettings();
+  const layout = useMemo(
+    () => tabLayout(settingValues.tabOrder, settingValues.hiddenTabs),
+    [settingValues.tabOrder, settingValues.hiddenTabs],
+  );
+  const home = layout.shown[0]!.id;
+  const parsed = useMemo(() => parseRoute(subPath, home), [subPath, home]);
   const route = parsed?.kind === "redirect" ? parsed.to : parsed;
-  const [view, setView] = useState<View>(route?.kind === "list" ? route.view : panelMemory.filters.view);
-  const listView = view === "auto-fixers" ? panelMemory.filters.view : view;
+  const [chosenView, setView] = useState<View>(route?.kind === "list" ? route.view : panelMemory.filters.view);
+  const view = layout.shown.some((tab) => tab.id === chosenView) ? chosenView : home;
+  const showsItems = view === "issues" || view === "pulls";
+  const listView = showsItems ? view : panelMemory.filters.view;
   const [people, setPeople] = useState<People>(() =>
     parsed?.kind === "redirect"
       ? { ...panelMemory.filters.people, [parsed.mine]: "me" }
@@ -1969,7 +2265,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     memory,
     settings,
     verify,
-    view !== "auto-fixers",
+    showsItems,
   );
   const { list, load: loadList } = itemList;
   const openMine = useItemList(openMyPullRequests, memory, settings, verify);
@@ -2041,6 +2337,12 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     }
     setDetailSection("conversation");
   }, [route]);
+  useEffect(() => {
+    if (chosenView === view) return;
+    setView(view);
+    if (route?.kind === "list")
+      navigate.toPluginPanel("gitea", { subPath: view, replace: true });
+  }, [chosenView, navigate, route, view]);
   const refresh = useCallback(async () => {
     await Promise.all([loadStatus(), loadList(true)]);
   }, [loadList, loadStatus]);
@@ -2608,7 +2910,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
             }}
           >
             <TabsList>
-              {panelTabs.map(({ id, label }) => (
+              {layout.shown.map(({ id, label }) => (
                 <TabsTrigger key={id} value={id} className="gap-1.5">
                   {label}
                   {badges[id] === undefined ? null : (
@@ -2619,9 +2921,11 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
             </TabsList>
           </Tabs>
           <span className="flex-1" />
-          <Button size="sm" variant="outline" onClick={() => void refresh()}>
-            Refresh
-          </Button>
+          {view !== "settings" && (
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Refresh
+            </Button>
+          )}
           {view === "issues" && (
             <Button
               size="sm"
@@ -2652,11 +2956,13 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
           )}
           {tab?.renders === "auto-fixers" ? (
             <AutoFixerPreferencesControl />
-          ) : tab?.automation ? (
+          ) : tab?.renders === "items" && tab.automation ? (
             <AutoFixerPreferencesControl disabled={person !== "me"} />
           ) : null}
           {tab?.renders === "auto-fixers" ? (
             <AutoFixerList />
+          ) : tab?.renders === "settings" ? (
+            <PanelSettings layout={layout} values={settingValues} onChange={updateSettings} />
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">

@@ -24,6 +24,7 @@ import {
   type RawPullDiff,
 } from "./pull-diff.js";
 import { draftTitle, isDraftTitle } from "./draft-title.js";
+import { tabLayoutSettings } from "./panel-tabs.js";
 import {
   archived,
   activePolicy,
@@ -673,6 +674,13 @@ function repositoryFromRemote(raw: string, base: URL): string | null {
   return repositorySchema.safeParse(candidate).success ? candidate : null;
 }
 
+/** Whether only the tab layout changed. Such a change keeps Gitea data cached. */
+function onlyTabLayoutChanged<Values extends Record<string, unknown>>(next: Values, prev: Values) {
+  return Object.keys(next).every(
+    (key) => tabLayoutSettings.includes(key) || next[key] === prev[key],
+  );
+}
+
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     baseUrl: {
@@ -705,6 +713,20 @@ export default async function plugin(bb: BbPluginApi) {
         "Conversations, diffs, and lists each have a cache of this size.",
       experimental_schema: cacheMiBSchema,
       default: 64,
+    },
+    tabOrder: {
+      type: "string",
+      label: "Tab order",
+      description:
+        "Comma-separated tab ids: issues, pulls, auto-fixers, settings. Unknown ids are ignored, and missing tabs keep their default position. Empty uses the default order.",
+      default: "",
+    },
+    hiddenTabs: {
+      type: "string",
+      label: "Hidden tabs",
+      description:
+        "Comma-separated tab ids to hide: issues, pulls, auto-fixers. The Settings tab is always shown.",
+      default: "",
     },
   });
   let config = await settings.get();
@@ -771,8 +793,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(() => {
     for (const cache of displays) cache.dispose();
   });
-  settings.onChange((next) => {
+  settings.onChange((next, prev) => {
     config = next;
+    if (onlyTabLayoutChanged(next, prev)) return;
     loginLookup = null;
     repoDiscovery = null;
     repoOptionCache.clear();

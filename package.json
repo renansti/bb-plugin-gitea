@@ -36,6 +36,7 @@
     "pull-files-view.ts",
     "auto-fixer.ts",
     "draft-title.ts",
+    "panel-tabs.ts",
     "app.tsx",
     "components",
     "lib",

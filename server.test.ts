@@ -1516,6 +1516,23 @@ it("keys cached content by account and clears it when settings change or Gitea r
   expect(displaySignals(host)).toHaveLength(announced);
 });
 
+it("keeps cached content when only the tab order or hidden tabs change", async () => {
+  const { host, calls } = await start(({ endpoint }) =>
+    endpoint.split("?")[0]!.endsWith("/issues/4")
+      ? { json: issue(4) }
+      : { json: [] },
+  );
+  const read = () => conversation(host, { number: 4, kind: "issue" });
+  await read();
+  const warm = calls.length;
+  const announced = displaySignals(host).length;
+
+  await host.harness.behavior.setSettings({ tabOrder: "pulls,issues", hiddenTabs: "auto-fixers" });
+  await read();
+  expect(calls).toHaveLength(warm);
+  expect(displaySignals(host)).toHaveLength(announced);
+});
+
 async function myPulls(host: Host, input: Record<string, unknown> = {}) {
   return giteaRpcContract.listMyPullRequests.output.parse(
     await host.harness.behavior.callRpc("listMyPullRequests", {

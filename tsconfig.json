@@ -27,6 +27,7 @@
     "pull-diff.ts",
     "display-cache.ts",
     "pull-files-view.ts",
+    "panel-tabs.ts",
     "*.test.ts",
     "app.tsx",
     "vitest.config.ts"
