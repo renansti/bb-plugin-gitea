@@ -2453,8 +2453,8 @@ export default async function plugin(bb: BbPluginApi) {
           ? (value as Record<string, unknown>)
           : {};
       const [branches, pulls] = await Promise.all([
-        paginated(repoPath(repo, "branches"), signal),
-        paginated(repoPath(repo, "pulls?state=open"), signal),
+        paginated(repoPath(repo, "branches"), signal, maxPages, 4),
+        paginated(repoPath(repo, "pulls?state=open"), signal, maxPages, 4),
       ]);
       return {
         truncated: branches.truncated || pulls.truncated,
