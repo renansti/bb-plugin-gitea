@@ -2006,7 +2006,7 @@ function TabOrderList({
   onToggle: (id: View, shown: boolean) => void;
 }) {
   const saved = useMemo(() => layout.order.map((tab) => tab.id), [layout.order]);
-  const [drag, setDrag] = useState<{ id: View; order: View[] } | null>(null);
+  const [drag, setDrag] = useState<{ id: View; order: View[]; pointerId: number } | null>(null);
   const rows = useRef(new Map<View, HTMLLIElement>());
   const handles = useRef(new Map<View, HTMLButtonElement>());
   const refocus = useRef<View | null>(null);
@@ -2021,13 +2021,48 @@ function TabOrderList({
     refocus.current = id;
     onReorder(next);
   };
-  const dropIndex = (dragged: View, clientY: number) =>
-    order.filter((id) => {
+  const dropIndex = (current: View[], dragged: View, clientY: number) =>
+    current.filter((id) => {
       const box = id === dragged ? null : rows.current.get(id)?.getBoundingClientRect();
       return box ? box.top + box.height / 2 < clientY : false;
     }).length;
+  // Moving a row in the DOM can drop pointer capture, so the window handles the
+  // rest of the drag. A release anywhere drops the row, and Escape puts it back.
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+      const next = moveTab(drag.order, drag.id, dropIndex(drag.order, drag.id, event.clientY));
+      if (formatTabIds(next) !== formatTabIds(drag.order)) setDrag({ ...drag, order: next });
+    };
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+      setDrag(null);
+      if (formatTabIds(drag.order) !== formatTabIds(saved)) onReorder(drag.order);
+    };
+    const onCancel = (event: PointerEvent) => {
+      if (event.pointerId === drag.pointerId) setDrag(null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setDrag(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [drag, saved, onReorder]);
   return (
-    <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+    <ol
+      className={`divide-y divide-border overflow-hidden rounded-lg border border-border bg-card ${drag ? "cursor-grabbing select-none" : ""}`}
+    >
       {order.map((id, index) => {
         const tab = panelTabs.find((entry) => entry.id === id)!;
         return (
@@ -2037,7 +2072,7 @@ function TabOrderList({
               if (row) rows.current.set(id, row);
               else rows.current.delete(id);
             }}
-            className={`flex items-center gap-3 px-3 py-2 ${drag?.id === id ? "bg-muted/50" : ""}`}
+            className={`flex items-center gap-3 px-3 py-2 transition-[background-color,box-shadow] ${drag?.id === id ? "relative bg-muted shadow-md" : ""}`}
           >
             <button
               type="button"
@@ -2047,31 +2082,20 @@ function TabOrderList({
               }}
               aria-label={`Move ${tab.label}`}
               aria-description={`Position ${index + 1} of ${order.length}. Press the up or down arrow key to move it.`}
-              className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted active:cursor-grabbing"
+              className={`flex size-7 shrink-0 touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted ${drag ? "cursor-grabbing" : "cursor-grab"}`}
               onKeyDown={(event) => {
                 const offset = { ArrowUp: -1, ArrowDown: 1 }[event.key];
-                if (offset === undefined) return;
+                if (offset === undefined || drag) return;
                 event.preventDefault();
                 move(id, index + offset);
               }}
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
                 event.currentTarget.setPointerCapture?.(event.pointerId);
-                setDrag({ id, order: saved });
+                setDrag({ id, order: saved, pointerId: event.pointerId });
               }}
-              onPointerMove={(event) => {
-                if (drag?.id !== id) return;
-                const next = moveTab(drag.order, id, dropIndex(id, event.clientY));
-                if (formatTabIds(next) !== formatTabIds(drag.order)) setDrag({ id, order: next });
-              }}
-              onPointerUp={() => {
-                if (drag?.id !== id) return;
-                setDrag(null);
-                if (formatTabIds(drag.order) !== formatTabIds(saved)) onReorder(drag.order);
-              }}
-              onPointerCancel={() => setDrag(null)}
             >
-              <Icon name="GripVertical" className="size-4" aria-hidden />
+              <Icon name="DragDropVertical" className="size-4" aria-hidden />
             </button>
             <span className="min-w-0 flex-1 truncate">{tab.label}</span>
             {tab.renders === "settings" ? (
