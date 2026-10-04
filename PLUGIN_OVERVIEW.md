@@ -2,11 +2,12 @@ Gitea issues and pull requests inside BB. You can browse, comment, review, and l
 
 ## What you get
 
-- Issue and pull request lists filtered by repository, state, and text, with My PRs and assigned-to-me My Issues views.
+- Issue and pull request lists filtered by repository, state, and text. An Assignee or Author filter shows your own items by default, or all items.
 - A conversation view where you comment, edit or delete your own comments, pick labels and assignees, close or reopen, review, and see checks.
 - A Files changed view with a file tree, unified or split diffs, and inline line comments.
 - A **Gitea** environment for new threads. It lists the project's Gitea branches, yours first, with pull request badges that show CI and merge state. The thread starts on the picked branch in a new or existing worktree.
-- Auto-fix (fix CI failures and address review feedback) and Auto-merge (merge when Gitea allows) controls on My PRs and Pull requests. Each starts a hidden BB agent thread. Both are off by default.
+- Auto-fix (fix CI failures and address review feedback) and Auto-merge (merge when Gitea allows) controls on the Pull requests tab. Each starts a hidden BB agent thread. Both are off by default.
+- A Settings tab where you reorder the tabs by drag and drop and hide the ones you do not use.
 
 ## Requirements
 

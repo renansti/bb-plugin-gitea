@@ -8,7 +8,7 @@ Write to Gitea only when the user asks. Read commands accept `--json`. List comm
 
 - `bb gitea status` checks sign-in and lists repositories.
 - `bb gitea repos` lists repositories from matching project `origin` remotes and `extraRepos`.
-- `bb gitea issues|prs|my-prs|my-issues [owner/repo]` list items. `my-issues` lists issues assigned to the signed-in account (not pull requests); all list commands accept `--state open|closed|all`, `--query text`, and `--json`. `my-prs` lists pull requests by the signed-in login, with each one's Auto-fix, Auto-merge, and auto-fixer state and the automation defaults. New issues created from My Issues are assigned to the signed-in account; ordinary creation is unchanged.
+- `bb gitea issues|prs|my-prs|my-issues [owner/repo]` list items. `my-issues` lists issues assigned to the signed-in account (not pull requests); all list commands accept `--state open|closed|all`, `--query text`, and `--json`. `my-prs` lists pull requests by the signed-in login, with each one's Auto-fix, Auto-merge, and auto-fixer state and the automation defaults. In the panel, a new issue created while the Issues tab's Assignee filter is set to the signed-in account is assigned to that account; with Assignee set to All, nobody is assigned.
 - `bb gitea show <issue|pr> <owner/repo> <number>` reads Gitea directly: the item, comments, and for a pull request its files, checks, and reviews. Use it when a decision needs current state.
 - `bb gitea conversation <issue|pr> <owner/repo> <number> [--refresh]` returns what the panel shows, without files. It is cached; `freshness.state` is `fresh`, `refreshing`, or `stale-error`. `--refresh` rereads Gitea. Comment `id`s come from here.
 - `bb gitea files <owner/repo> <number> [--refresh]` returns changed files and diffs for the returned `revision`, with `freshness` and a `stale` flag when the pull request moved during the read. Each file's `diff.kind` is `text` (with `patch`), `empty`, `binary`, `too-large` (over 256 KiB), or `unavailable` with `reason` `missing`, `stale`, `diff-too-large`, or `diff-failed`.
@@ -60,7 +60,7 @@ Auto-fixers: `setAutomation` (`repo`, `number`, and `fix`, `merge`, or both), `r
 
 - Lists cover at most 50 repositories, ten pages of 50 items per repository, and 200 items total. Errors are reported per repository.
 - Comments and reviews stop at 500, files at 500, checks at 100. A full result is marked as possibly truncated.
-- Panel caches: conversations 15 s fresh and 10 min stale, file sets 5 min fresh and 30 min stale, lists 15 s fresh and 10 min stale. Writes, settings changes, and rejected logins clear them. `show`, list commands, auto-fixers, and merges never use the cache.
+- Panel caches: conversations 15 s fresh and 10 min stale, file sets 5 min fresh and 30 min stale, lists 15 s fresh and 10 min stale. Writes, settings changes other than `tabOrder` and `hiddenTabs`, and rejected logins clear them. `show`, list commands, auto-fixers, and merges never use the cache.
 - Checks come from commit statuses.
 
 ## Settings
@@ -72,3 +72,6 @@ Set in the plugin settings page or with `bb plugin config gitea set <key> <value
 - `extraRepos`: optional `owner/repo` names, comma or space separated. They work without a project, but agent features need a project checkout.
 - `cacheEntryLimitMiB` (default 16): largest Gitea response read and cached. Larger reads fail with "exceeded the N MiB limit"; raise it for huge diffs.
 - `cacheLimitMiB` (default 64): memory for each display cache.
+- `tabOrder`: panel tab order as comma-separated tab ids `issues`, `pulls`, `auto-fixers`, `settings`. Empty uses that order. Unknown ids are ignored, and a missing tab is added at its default position. The panel opens on the first visible tab.
+- `hiddenTabs`: comma-separated tab ids to hide from the panel: `issues`, `pulls`, `auto-fixers`. The `settings` tab is always shown.
+- The panel's Settings tab changes `tabOrder` and `hiddenTabs` by drag and drop and switches, and shows every switch and select setting.

@@ -11,10 +11,12 @@ import {
 import {
   definePluginApp,
   experimental_ProviderModelPicker as ProviderModelPicker,
+  experimental_usePluginId,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSdk,
   useSettings,
   Markdown,
   UrlLink,
@@ -55,6 +57,13 @@ import {
   fileCounts,
   fileLabel,
 } from "./pull-files-view.js";
+import {
+  formatTabIds,
+  moveTab,
+  parseHiddenTabs,
+  parseTabOrder,
+  tabLayoutSettings,
+} from "./panel-tabs.js";
 
 type Item = PluginRpcResult<
   (typeof giteaRpcContract)["listItems"]
@@ -78,17 +87,22 @@ type AutoFixerView = MyPulls["items"][number]["autoFixer"];
 type AutoFixerSessions = PluginRpcResult<
   (typeof giteaRpcContract)["listAutoFixerSessions"]
 >["sessions"];
-type ListView = "my-prs" | "my-issues" | "issues" | "pulls";
-type View = ListView | "auto-fixers";
+type ListView = "issues" | "pulls";
+type View = ListView | "auto-fixers" | "settings";
+type Person = "me" | "all";
+type People = Record<ListView, Person>;
 type Route =
   | { kind: "list"; view: View }
-  | { kind: "new-issue"; from: "issues" | "my-issues" }
+  | { kind: "new-issue" }
   | { kind: "item"; item: ItemRef };
+/** A sub-path kept for existing links. The panel shows `to` and sets the person filter of the `mine` list to the signed-in user. */
+type Redirect = { kind: "redirect"; mine: ListView; to: Route };
 type DetailSection = "conversation" | "files";
 type Status = PluginRpcResult<(typeof giteaRpcContract)["status"]>;
 type StateFilter = "open" | "closed" | "all";
 type ListFilters = {
   view: ListView;
+  person: Person;
   state: StateFilter;
   repo: string;
   query: string;
@@ -265,8 +279,17 @@ let displayMemory: DisplayMemory = {
 };
 const memoryListeners = new Set<() => void>();
 let scopeWatchers = 0;
-const panelMemory: { filters: ListFilters; preferences: Preferences | null } = {
-  filters: { view: "my-prs", state: "open", repo: "all", query: "" },
+const panelMemory: {
+  filters: Omit<ListFilters, "person"> & { people: People };
+  preferences: Preferences | null;
+} = {
+  filters: {
+    view: "issues",
+    people: { issues: "me", pulls: "me" },
+    state: "open",
+    repo: "all",
+    query: "",
+  },
   preferences: null,
 };
 
@@ -293,15 +316,16 @@ async function verifyScope(rpc: PluginRpcClient<typeof giteaRpcContract>) {
   dispatch({ type: "status", epoch, status: await rpc.call("status", null) });
 }
 
+/** Identifies the settings that decide what Gitea data the panel shows. The tab layout is left out. */
 function settingsKey(
   values: Record<string, string | number | boolean> | undefined,
 ) {
   return values === undefined
     ? null
     : JSON.stringify(
-        Object.entries(values).sort(([left], [right]) =>
-          left.localeCompare(right),
-        ),
+        Object.entries(values)
+          .filter(([key]) => !tabLayoutSettings.includes(key))
+          .sort(([left], [right]) => left.localeCompare(right)),
       );
 }
 
@@ -345,21 +369,23 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 }
 
 const openMyPullRequests: ListFilters = {
-  view: "my-prs",
+  view: "pulls",
+  person: "me",
   state: "open",
   repo: "all",
   query: "",
 };
 
 const openMyIssues: ListFilters = {
-  view: "my-issues",
+  view: "issues",
+  person: "me",
   state: "open",
   repo: "all",
   query: "",
 };
 
-function listKey({ view, state, repo, query }: ListFilters) {
-  return JSON.stringify([view, repo, state, query]);
+function listKey({ view, person, state, repo, query }: ListFilters) {
+  return JSON.stringify([view, person, repo, state, query]);
 }
 
 function useIsDarkTheme() {
@@ -843,24 +869,23 @@ const loading = { state: "loading" } as const;
 
 async function readItemList(
   rpc: PluginRpcClient<typeof giteaRpcContract>,
-  { view, state, repo, query }: ListFilters,
+  { view, person, state, repo, query }: ListFilters,
   refresh: boolean,
 ): Promise<ItemList> {
   const input = { state, query, refresh, ...(repo === "all" ? {} : { repo }) };
+  if (person === "all") {
+    const { account, items, truncated, errors, freshness } = await rpc.call(
+      "listItems", { kind: view === "issues" ? "issue" : "pr", ...input },
+    );
+    return { account, items, truncated, errors, freshness };
+  }
   switch (view) {
-    case "my-issues": {
+    case "issues": {
       const { account, items, truncated, errors, freshness } = await rpc.call("listMyIssues", input);
       return { account, items, truncated, errors, freshness };
     }
-    case "my-prs": {
-      const { account, items, truncated, errors, freshness } = await rpc.call("listMyPullRequests", input);
-      return { account, items, truncated, errors, freshness };
-    }
-    case "issues":
     case "pulls": {
-      const { account, items, truncated, errors, freshness } = await rpc.call(
-        "listItems", { kind: view === "issues" ? "issue" : "pr", ...input },
-      );
+      const { account, items, truncated, errors, freshness } = await rpc.call("listMyPullRequests", input);
       return { account, items, truncated, errors, freshness };
     }
   }
@@ -875,7 +900,7 @@ function useItemList(
 ) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const key = enabled ? listKey(filters) : null;
-  const { view, state, repo, query } = filters;
+  const { view, person, state, repo, query } = filters;
   const { epoch } = memory;
   const [failure, setFailure] = useState<{
     key: string;
@@ -893,7 +918,7 @@ function useItemList(
       try {
         const list = await readItemList(
           rpc,
-          { view, state, repo, query },
+          { view, person, state, repo, query },
           refresh,
         );
         if (current !== run.current) return;
@@ -911,7 +936,7 @@ function useItemList(
       }
       setPending(null);
     },
-    [key, rpc, view, state, repo, query, epoch, onFailure],
+    [key, rpc, view, person, state, repo, query, epoch, onFailure],
   );
   useEffect(() => {
     void load(false);
@@ -1424,15 +1449,15 @@ function ChangedFiles({
   );
 }
 
-function parseRoute(subPath: string): Route | null {
+/** `home` is the tab the panel opens on when the sub-path is empty. */
+function parseRoute(subPath: string, home: View): Route | Redirect | null {
   switch (subPath) {
-    case "": case "my-prs": return { kind: "list", view: "my-prs" };
-    case "my-issues": return { kind: "list", view: "my-issues" };
-    case "auto-fixers": return { kind: "list", view: "auto-fixers" };
-    case "issues": return { kind: "list", view: "issues" };
-    case "pulls": return { kind: "list", view: "pulls" };
-    case "new": return { kind: "new-issue", from: "issues" };
-    case "my-issues/new": return { kind: "new-issue", from: "my-issues" };
+    case "": return { kind: "list", view: home };
+    case "auto-fixers": case "issues": case "pulls": case "settings": return { kind: "list", view: subPath };
+    case "new": return { kind: "new-issue" };
+    case "my-issues": return { kind: "redirect", mine: "issues", to: { kind: "list", view: "issues" } };
+    case "my-prs": return { kind: "redirect", mine: "pulls", to: { kind: "list", view: "pulls" } };
+    case "my-issues/new": return { kind: "redirect", mine: "issues", to: { kind: "new-issue" } };
   }
   const match = /^(issues|pulls)\/([^/]+)\/([^/]+)\/([1-9]\d*)$/.exec(subPath);
   if (!match)
@@ -1445,7 +1470,7 @@ function parseRoute(subPath: string): Route | null {
 function routePath(route: Route): string {
   switch (route.kind) {
     case "list": return route.view;
-    case "new-issue": return route.from === "my-issues" ? "my-issues/new" : "new";
+    case "new-issue": return "new";
     case "item": return `${route.item.kind === "pr" ? "pulls" : "issues"}/${route.item.repo}/${route.item.number}`;
   }
 }
@@ -1662,7 +1687,7 @@ function AgentExecutionControl() {
   );
 }
 
-function AutoFixerPreferencesControl() {
+function AutoFixerPreferencesControl({ disabled = false }: { disabled?: boolean }) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const [loaded, setLoaded] = useState<Loadable<Preferences>>(() =>
     panelMemory.preferences
@@ -1739,7 +1764,10 @@ function AutoFixerPreferencesControl() {
   const execution: ExperimentalProviderModelPickerValue = preferences.execution;
   const fields = { fix: "autoFix", merge: "autoMerge" } as const;
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+    <div
+      title={disabled ? "These settings apply to your own pull requests. Set Author to you to change them." : undefined}
+      className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground"
+    >
       {automationToggles.map(({ option, label, description }) => {
         const field = fields[option];
         return (
@@ -1751,7 +1779,7 @@ function AutoFixerPreferencesControl() {
             <input
               type="checkbox"
               checked={preferences[field]}
-              disabled={saving}
+              disabled={saving || disabled}
               onChange={(event) => {
                 const enabled = event.target.checked;
                 void save(
@@ -1766,7 +1794,7 @@ function AutoFixerPreferencesControl() {
       })}
       <ProviderModelPicker
         value={execution}
-        disabled={saving}
+        disabled={saving || disabled}
         align="end"
         onChange={(value) => {
           const next = {
@@ -1819,7 +1847,7 @@ function AutoFixerList() {
   if (!sessions.value.length)
     return (
       <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
-        No auto-fixers yet. Turn on Auto-fix or Auto-merge from My PRs.
+        No auto-fixers yet. Turn on Auto-fix or Auto-merge from Pull requests.
       </div>
     );
   return (
@@ -1863,27 +1891,364 @@ function AutoFixerList() {
   );
 }
 
-const viewLabels: Record<View, string> = {
-  "my-prs": "My PRs",
-  "my-issues": "My Issues",
-  "auto-fixers": "Auto-fixers",
-  issues: "Issues",
-  pulls: "Pull requests",
+type PanelTab =
+  | {
+      id: ListView;
+      label: string;
+      renders: "items";
+      /** Label of the person filter: the issue assignee or the pull request author. */
+      person: "Assignee" | "Author";
+      /** Whether the tab shows the Auto-fix all, Auto-merge all, and model controls. */
+      automation: boolean;
+    }
+  | { id: "auto-fixers"; label: string; renders: "auto-fixers" }
+  | { id: "settings"; label: string; renders: "settings" };
+
+/**
+ * The panel's tabs in their default order. The tab bar renders only these.
+ * The `tabOrder` and `hiddenTabs` settings change their order and hide them.
+ */
+const panelTabs: readonly PanelTab[] = [
+  { id: "issues", label: "Issues", renders: "items", person: "Assignee", automation: false },
+  { id: "pulls", label: "Pull requests", renders: "items", person: "Author", automation: true },
+  { id: "auto-fixers", label: "Auto-fixers", renders: "auto-fixers" },
+  { id: "settings", label: "Settings", renders: "settings" },
+];
+
+type SettingValues = Record<string, string | number | boolean>;
+type TabLayout = {
+  /** Every tab in the saved order. */
+  order: PanelTab[];
+  hidden: ReadonlySet<View>;
+  /** The tabs in the tab bar. Never empty, because the Settings tab cannot be hidden. */
+  shown: PanelTab[];
 };
+
+function tabLayout(tabOrder: unknown, hiddenTabs: unknown): TabLayout {
+  const byId = new Map(panelTabs.map((tab) => [tab.id, tab]));
+  const order = parseTabOrder(
+    panelTabs.map((tab) => tab.id),
+    typeof tabOrder === "string" ? tabOrder : "",
+  ).map((id) => byId.get(id)!);
+  const hidden = parseHiddenTabs<View>(
+    panelTabs.filter((tab) => tab.renders !== "settings").map((tab) => tab.id),
+    typeof hiddenTabs === "string" ? hiddenTabs : "",
+  );
+  return { order, hidden, shown: order.filter((tab) => !hidden.has(tab.id)) };
+}
+
+/** Plugin setting values, with saved changes shown before the host reports them. */
+function usePluginSettings() {
+  const sdk = useSdk();
+  const pluginId = experimental_usePluginId();
+  const { values } = useSettings();
+  const [pending, setPending] = useState<SettingValues>({});
+  const reported = JSON.stringify(values ?? null);
+  useEffect(() => setPending({}), [reported]);
+  const update = useCallback(
+    async (next: SettingValues) => {
+      setPending((current) => ({ ...current, ...next }));
+      try {
+        await sdk.plugins.updateSettings({ pluginId, values: next });
+      } catch (error) {
+        setPending((current) =>
+          Object.fromEntries(Object.entries(current).filter(([key]) => !(key in next))),
+        );
+        toast.error(error instanceof Error ? error.message : "Could not save the setting");
+      }
+    },
+    [sdk, pluginId],
+  );
+  const merged = useMemo(() => ({ ...values, ...pending }), [values, pending]);
+  return { values: merged, update };
+}
+
+function tabLabel(view: View) {
+  return panelTabs.find((tab) => tab.id === view)?.label ?? "Back";
+}
+
+/** Shows items for the signed-in user or for everyone. */
+function PersonFilter({
+  label,
+  login,
+  value,
+  onChange,
+}: {
+  label: string;
+  login: string | null;
+  value: Person;
+  onChange: (value: Person) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next as Person)}>
+      <SelectTrigger aria-label={label} className="w-44">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="me">{`${label}: ${login ?? "me"}`}</SelectItem>
+        <SelectItem value="all">{`${label}: All`}</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * Lists the tabs in order. Each tab moves by dragging its handle with a mouse,
+ * pen, or finger, or by focusing the handle and pressing the up or down arrow key.
+ */
+function TabOrderList({
+  layout,
+  onReorder,
+  onToggle,
+}: {
+  layout: TabLayout;
+  onReorder: (order: View[]) => void;
+  onToggle: (id: View, shown: boolean) => void;
+}) {
+  const saved = useMemo(() => layout.order.map((tab) => tab.id), [layout.order]);
+  const [drag, setDrag] = useState<{ id: View; order: View[] } | null>(null);
+  const rows = useRef(new Map<View, HTMLLIElement>());
+  const handles = useRef(new Map<View, HTMLButtonElement>());
+  const refocus = useRef<View | null>(null);
+  const order = drag?.order ?? saved;
+  useEffect(() => {
+    if (refocus.current) handles.current.get(refocus.current)?.focus();
+    refocus.current = null;
+  }, [saved]);
+  const move = (id: View, index: number) => {
+    const next = moveTab(saved, id, index);
+    if (formatTabIds(next) === formatTabIds(saved)) return;
+    refocus.current = id;
+    onReorder(next);
+  };
+  const dropIndex = (dragged: View, clientY: number) =>
+    order.filter((id) => {
+      const box = id === dragged ? null : rows.current.get(id)?.getBoundingClientRect();
+      return box ? box.top + box.height / 2 < clientY : false;
+    }).length;
+  return (
+    <ol className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+      {order.map((id, index) => {
+        const tab = panelTabs.find((entry) => entry.id === id)!;
+        return (
+          <li
+            key={id}
+            ref={(row) => {
+              if (row) rows.current.set(id, row);
+              else rows.current.delete(id);
+            }}
+            className={`flex items-center gap-3 px-3 py-2 ${drag?.id === id ? "bg-muted/50" : ""}`}
+          >
+            <button
+              type="button"
+              ref={(handle) => {
+                if (handle) handles.current.set(id, handle);
+                else handles.current.delete(id);
+              }}
+              aria-label={`Move ${tab.label}`}
+              aria-description={`Position ${index + 1} of ${order.length}. Press the up or down arrow key to move it.`}
+              className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted active:cursor-grabbing"
+              onKeyDown={(event) => {
+                const offset = { ArrowUp: -1, ArrowDown: 1 }[event.key];
+                if (offset === undefined) return;
+                event.preventDefault();
+                move(id, index + offset);
+              }}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+                setDrag({ id, order: saved });
+              }}
+              onPointerMove={(event) => {
+                if (drag?.id !== id) return;
+                const next = moveTab(drag.order, id, dropIndex(id, event.clientY));
+                if (formatTabIds(next) !== formatTabIds(drag.order)) setDrag({ id, order: next });
+              }}
+              onPointerUp={() => {
+                if (drag?.id !== id) return;
+                setDrag(null);
+                if (formatTabIds(drag.order) !== formatTabIds(saved)) onReorder(drag.order);
+              }}
+              onPointerCancel={() => setDrag(null)}
+            >
+              <Icon name="GripVertical" className="size-4" aria-hidden />
+            </button>
+            <span className="min-w-0 flex-1 truncate">{tab.label}</span>
+            {tab.renders === "settings" ? (
+              <span className="text-xs text-muted-foreground">Always shown</span>
+            ) : (
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label={`Show ${tab.label}`}
+                checked={!layout.hidden.has(id)}
+                onChange={(event) => onToggle(id, event.target.checked)}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+type SettingSchema = Awaited<
+  ReturnType<ReturnType<typeof useSdk>["plugins"]["getSettings"]>
+>["schema"];
+
+/**
+ * Shows every switch and select setting the plugin defines, using the labels
+ * and descriptions from its setting definitions. Text and number settings,
+ * such as the Gitea URL and cache sizes, stay in BB's plugin settings.
+ */
+function PluginSettingFields({
+  values,
+  onChange,
+}: {
+  values: SettingValues;
+  onChange: (values: SettingValues) => void;
+}) {
+  const sdk = useSdk();
+  const pluginId = experimental_usePluginId();
+  const [schema, setSchema] = useState<Loadable<SettingSchema>>(loading);
+  useEffect(() => {
+    let current = true;
+    sdk.plugins.getSettings({ pluginId }).then(
+      (result) => {
+        if (current) setSchema({ state: "ready", value: result.schema });
+      },
+      (error: unknown) => {
+        if (current)
+          setSchema({
+            state: "error",
+            message: error instanceof Error ? error.message : "Could not load the plugin settings",
+          });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [sdk, pluginId]);
+  const fields = schema.state === "ready"
+    ? Object.entries(schema.value).flatMap(([key, definition]) =>
+        definition.type === "boolean" || definition.type === "select"
+          ? [{ key, definition, value: values[key] ?? definition.default }]
+          : [],
+      )
+    : [];
+  if (schema.state === "ready" && !fields.length) return null;
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold text-muted-foreground">Panel</h3>
+      {schema.state === "loading" ? (
+        <Skeleton className="h-16 w-full" />
+      ) : schema.state === "error" ? (
+        <div className="text-xs text-muted-foreground">{schema.message}</div>
+      ) : (
+        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+          {fields.map(({ key, definition, value }) => (
+            <li key={key} className="flex items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div>{definition.label}</div>
+                {definition.description && (
+                  <div className="text-xs text-muted-foreground">{definition.description}</div>
+                )}
+              </div>
+              {definition.type === "boolean" ? (
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label={definition.label}
+                  checked={value === true}
+                  onChange={(event) => onChange({ [key]: event.target.checked })}
+                />
+              ) : (
+                <Select
+                  value={typeof value === "string" ? value : undefined}
+                  onValueChange={(next) => onChange({ [key]: next })}
+                >
+                  <SelectTrigger aria-label={definition.label} className="w-44">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {definition.options.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PanelSettings({
+  layout,
+  values,
+  onChange,
+}: {
+  layout: TabLayout;
+  values: SettingValues;
+  onChange: (values: SettingValues) => void;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-muted-foreground">Tabs</h3>
+        <TabOrderList
+          layout={layout}
+          onReorder={(order) => onChange({ tabOrder: formatTabIds(order) })}
+          onToggle={(id, shown) => {
+            const hidden = new Set(layout.hidden);
+            if (shown) hidden.delete(id);
+            else hidden.add(id);
+            onChange({ hiddenTabs: formatTabIds(hidden) });
+          }}
+        />
+      </section>
+      <PluginSettingFields values={values} onChange={onChange} />
+    </div>
+  );
+}
 
 function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const navigate = useBbNavigate();
-  const route = useMemo(() => parseRoute(subPath), [subPath]);
-  const [view, setView] = useState<View>(route?.kind === "list" ? route.view : panelMemory.filters.view);
-  const listView = view === "auto-fixers" ? panelMemory.filters.view : view;
+  const { values: settingValues, update: updateSettings } = usePluginSettings();
+  const layout = useMemo(
+    () => tabLayout(settingValues.tabOrder, settingValues.hiddenTabs),
+    [settingValues.tabOrder, settingValues.hiddenTabs],
+  );
+  const home = layout.shown[0]!.id;
+  const parsed = useMemo(() => parseRoute(subPath, home), [subPath, home]);
+  const route = parsed?.kind === "redirect" ? parsed.to : parsed;
+  const [chosenView, setView] = useState<View>(route?.kind === "list" ? route.view : panelMemory.filters.view);
+  const view = layout.shown.some((tab) => tab.id === chosenView) ? chosenView : home;
+  const showsItems = view === "issues" || view === "pulls";
+  const listView = showsItems ? view : panelMemory.filters.view;
+  const [people, setPeople] = useState<People>(() =>
+    parsed?.kind === "redirect"
+      ? { ...panelMemory.filters.people, [parsed.mine]: "me" }
+      : panelMemory.filters.people,
+  );
+  const person = people[listView];
   const [state, setState] = useState(panelMemory.filters.state);
   const [repo, setRepo] = useState(panelMemory.filters.repo);
   const [query, setQuery] = useState(panelMemory.filters.query);
   const searchQuery = useDebouncedValue(query, 250);
   useEffect(() => {
-    panelMemory.filters = { view: listView, state, repo, query: searchQuery };
-  }, [view, state, repo, searchQuery]);
+    panelMemory.filters = { view: listView, people, state, repo, query: searchQuery };
+  }, [view, people, state, repo, searchQuery]);
+  useEffect(() => {
+    if (parsed?.kind !== "redirect") return;
+    setPeople((current) => ({ ...current, [parsed.mine]: "me" }));
+    navigate.toPluginPanel("gitea", { subPath: routePath(parsed.to), replace: true });
+  }, [navigate, parsed]);
   const settings = useScopeWatch();
   const memory = useDisplayMemory();
   const status = trustedStatus(memory, settings);
@@ -1898,16 +2263,16 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   }, [rpc]);
   const verify = useCallback(() => void loadStatus(), [loadStatus]);
   const itemList = useItemList(
-    { view: listView, state, repo, query: searchQuery },
+    { view: listView, person, state, repo, query: searchQuery },
     memory,
     settings,
     verify,
-    view !== "auto-fixers",
+    showsItems,
   );
   const { list, load: loadList } = itemList;
   const openMine = useItemList(openMyPullRequests, memory, settings, verify);
   const openIssues = useItemList(openMyIssues, memory, settings, verify);
-  const fromMyIssues = route?.kind === "new-issue" && route.from === "my-issues";
+  const assignToMe = people.issues === "me";
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
   const [creatingIssue, setCreatingIssue] = useState(false);
@@ -1950,7 +2315,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     void loadStatus();
   }, [loadStatus, epoch]);
   const reloadAutoFixers = useCallback(() => {
-    if (view === "my-prs" || view === "pulls") void loadItems();
+    if (view === "pulls") void loadItems();
   }, [loadItems, view]);
   useRealtime("auto-fixer-changed", useCoalesced(reloadAutoFixers, 500));
   const openItem = useCallback(
@@ -1969,11 +2334,17 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     if (route?.kind !== "item") {
       if (route?.kind === "list") setView(route.view);
-      else if (route?.kind === "new-issue") setView(route.from);
+      else if (route?.kind === "new-issue") setView("issues");
       return;
     }
     setDetailSection("conversation");
   }, [route]);
+  useEffect(() => {
+    if (chosenView === view) return;
+    setView(view);
+    if (route?.kind === "list")
+      navigate.toPluginPanel("gitea", { subPath: view, replace: true });
+  }, [chosenView, navigate, route, view]);
   const refresh = useCallback(async () => {
     await Promise.all([loadStatus(), loadList(true)]);
   }, [loadList, loadStatus]);
@@ -2090,7 +2461,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
         repo,
         title: newTitle,
         body: newBody,
-        assignToMe: fromMyIssues,
+        assignToMe,
       });
       setNewTitle("");
       setNewBody("");
@@ -2105,7 +2476,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
       creatingIssueRef.current = false;
       setCreatingIssue(false);
     }
-  }, [fromMyIssues, loadItems, newBody, newTitle, openItem, repo, rpc]);
+  }, [assignToMe, loadItems, newBody, newTitle, openItem, repo, rpc]);
 
   const shownList = list.state === "ready" ? list.value : null;
   const visibleItems = shownList?.items ?? [];
@@ -2117,6 +2488,9 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
     openIssues.list.state === "ready"
       ? `${openIssues.list.value.items.length}${openIssues.list.value.truncated ? "+" : ""}`
       : undefined;
+  const badges: Partial<Record<View, string>> = { issues: issueCount, pulls: count };
+  const tab = panelTabs.find((entry) => entry.id === view);
+  const login = status?.state === "connected" ? status.login : null;
   if (newIssue) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm md:p-5">
@@ -2127,12 +2501,10 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               variant="ghost"
               className="h-7 px-2"
               onClick={() => {
-                navigate.toPluginPanel("gitea", {
-                  subPath: fromMyIssues ? "my-issues" : "issues",
-                });
+                navigate.toPluginPanel("gitea", { subPath: "issues" });
               }}
             >
-              ← {fromMyIssues ? "My Issues" : "Issues"}
+              ← {tabLabel("issues")}
             </Button>
             <span>New issue</span>
           </div>
@@ -2233,7 +2605,7 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               className="h-7 px-2"
               onClick={() => navigate.toPluginPanel("gitea", { subPath: view })}
             >
-              ← {viewLabels[view]}
+              ← {tabLabel(view)}
             </Button>
             <span className="min-w-0 truncate">
               {detail.repo} · #{detail.number}
@@ -2540,32 +2912,27 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
             }}
           >
             <TabsList>
-              <TabsTrigger value="my-prs" className="gap-1.5">
-                My PRs
-                {count === undefined ? null : (
-                  <Badge variant="secondary">{count}</Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="my-issues" className="gap-1.5">
-                My Issues
-                {issueCount === undefined ? null : (
-                  <Badge variant="secondary">{issueCount}</Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="auto-fixers">Auto-fixers</TabsTrigger>
-              <TabsTrigger value="issues">Issues</TabsTrigger>
-              <TabsTrigger value="pulls">Pull requests</TabsTrigger>
+              {layout.shown.map(({ id, label }) => (
+                <TabsTrigger key={id} value={id} className="gap-1.5">
+                  {label}
+                  {badges[id] === undefined ? null : (
+                    <Badge variant="secondary">{badges[id]}</Badge>
+                  )}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
           <span className="flex-1" />
-          <Button size="sm" variant="outline" onClick={() => void refresh()}>
-            Refresh
-          </Button>
-          {(view === "issues" || view === "my-issues") && (
+          {view !== "settings" && (
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Refresh
+            </Button>
+          )}
+          {view === "issues" && (
             <Button
               size="sm"
               onClick={() =>
-                navigate.toPluginPanel("gitea", { subPath: routePath({ kind: "new-issue", from: view === "my-issues" ? "my-issues" : "issues" }) })
+                navigate.toPluginPanel("gitea", { subPath: routePath({ kind: "new-issue" }) })
               }
             >
               New issue
@@ -2589,14 +2956,26 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
               ))}
             </div>
           )}
-          {(view === "my-prs" || view === "auto-fixers") && (
+          {tab?.renders === "auto-fixers" ? (
             <AutoFixerPreferencesControl />
-          )}
-          {view === "auto-fixers" ? (
+          ) : tab?.renders === "items" && tab.automation ? (
+            <AutoFixerPreferencesControl disabled={person !== "me"} />
+          ) : null}
+          {tab?.renders === "auto-fixers" ? (
             <AutoFixerList />
+          ) : tab?.renders === "settings" ? (
+            <PanelSettings layout={layout} values={settingValues} onChange={updateSettings} />
           ) : (
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">
+                {tab && (
+                  <PersonFilter
+                    label={tab.person}
+                    login={login}
+                    value={person}
+                    onChange={(next) => setPeople((current) => ({ ...current, [tab.id]: next }))}
+                  />
+                )}
                 <Select value={repo} onValueChange={setRepo}>
                   <SelectTrigger className="w-52">
                     <SelectValue placeholder="All repositories" />
@@ -2721,11 +3100,11 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
                     ))
                   ) : (
                     <div className="p-8 text-center text-muted-foreground">
-                      {(view === "my-prs" || view === "my-issues") && status?.state !== "connected"
+                      {person === "me" && status?.state !== "connected"
                         ? "Install tea and sign in with a matching Gitea login profile to see your pull requests."
-                        : view === "my-prs"
+                        : person === "me" && view === "pulls"
                           ? "No pull requests authored by you in tracked repositories."
-                          : view === "my-issues"
+                          : person === "me"
                             ? "No issues assigned to you in tracked repositories."
                           : repoOptions.length
                             ? "No matching items."

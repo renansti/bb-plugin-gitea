@@ -4,6 +4,7 @@ import {
   cleanup,
   fireEvent,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -126,7 +127,7 @@ function conversation(title: string) {
 
 const Panel = panel.component;
 
-it.each(["", "my-prs"])("returns to My PRs after opening a PR from %s, including after a remount", async (listPath) => {
+it.each(["pulls", "my-prs"])("returns to Pull requests after opening a PR from %s, including after a remount", async (listPath) => {
   await watchScope();
   const options = {
     settings,
@@ -146,25 +147,25 @@ it.each(["", "my-prs"])("returns to My PRs after opening a PR from %s, including
   });
   slot.lifecycle.rerender(<Panel subPath="pulls/acme/widgets/1" />);
   expect(await screen.findByText("History PR detail")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "← My PRs" }));
+  fireEvent.click(screen.getByRole("button", { name: "← Pull requests" }));
   expect(slot.navigateCalls.at(-1)).toEqual({
-    method: "toPluginPanel", path: "gitea", options: { subPath: "my-prs" },
+    method: "toPluginPanel", path: "gitea", options: { subPath: "pulls" },
   });
   // The host supplies the historical route for Back and Forward.
   slot.lifecycle.rerender(<Panel subPath={listPath} />);
   expect(await screen.findByText("History PR")).toBeTruthy();
-  expect(screen.getByRole("tab", { name: /My PRs/ }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("tab", { name: /Pull requests/ }).getAttribute("aria-selected")).toBe("true");
   slot.lifecycle.rerender(<Panel subPath="pulls/acme/widgets/1" />);
   expect(await screen.findByText("History PR detail")).toBeTruthy();
   slot.lifecycle.unmount();
   renderSlot(panel, { subPath: listPath }, options);
   expect(await screen.findByText("History PR")).toBeTruthy();
-  expect(screen.getByRole("tab", { name: /My PRs/ }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("tab", { name: /Pull requests/ }).getAttribute("aria-selected")).toBe("true");
 });
 
 it("records distinct list routes and restores tabs when those routes are replayed", async () => {
   await watchScope();
-  const slot = renderSlot(panel, { subPath: "my-prs" }, {
+  const slot = renderSlot(panel, { subPath: "issues" }, {
     settings,
     rpc: {
       status: () => status(),
@@ -176,8 +177,7 @@ it("records distinct list routes and restores tabs when those routes are replaye
     },
   });
   for (const [path, label] of [
-    ["my-issues", "My Issues"], ["issues", "Issues"],
-    ["pulls", "Pull requests"], ["auto-fixers", "Auto-fixers"],
+    ["pulls", "Pull requests"], ["auto-fixers", "Auto-fixers"], ["issues", "Issues"],
   ]) {
     fireEvent.mouseDown(screen.getByRole("tab", { name: new RegExp(`^${label}`) }), { button: 0 });
     expect(slot.navigateCalls.at(-1)).toEqual({
@@ -185,8 +185,75 @@ it("records distinct list routes and restores tabs when those routes are replaye
     });
     slot.lifecycle.rerender(<Panel subPath={path!} />);
   }
-  for (const [path, label] of [["pulls", "Pull requests"], ["my-issues", "My Issues"], ["auto-fixers", "Auto-fixers"]]) {
+  for (const [path, label] of [["pulls", "Pull requests"], ["issues", "Issues"], ["auto-fixers", "Auto-fixers"]]) {
     slot.lifecycle.rerender(<Panel subPath={path!} />);
     expect(screen.getByRole("tab", { name: new RegExp(`^${label}`) }).getAttribute("aria-selected")).toBe("true");
   }
+});
+
+function connected() {
+  return { state: "connected", login: "dev", account: work, repos: [{ repo: "acme/widgets", projectId: null }] };
+}
+
+it.each([
+  ["my-issues", "issues", "Issues", "Assignee"],
+  ["my-prs", "pulls", "Pull requests", "Author"],
+])("redirects %s to %s with the filter set to you", async (oldPath, path, label, filter) => {
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  await watchScope();
+  const slot = renderSlot(panel, { subPath: path }, {
+    settings,
+    rpc: {
+      status: () => connected(),
+      getAutoFixerPreferences: () => preferences,
+      listMyPullRequests: () => mine([]),
+      listMyIssues: () => mine([]),
+      listItems: () => mine([]),
+    },
+  });
+  expect(await screen.findByText(`${filter}: dev`)).toBeTruthy();
+  fireEvent.click(screen.getByRole("combobox", { name: filter }));
+  fireEvent.click(screen.getByRole("option", { name: `${filter}: All` }));
+  slot.lifecycle.rerender(<Panel subPath={oldPath} />);
+  expect(slot.navigateCalls.at(-1)).toEqual({
+    method: "toPluginPanel", path: "gitea", options: { subPath: path, replace: true },
+  });
+  expect(screen.getByRole("tab", { name: new RegExp(`^${label}`) }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("combobox", { name: filter }).textContent).toBe(`${filter}: dev`);
+  Element.prototype.scrollIntoView = scrollIntoView;
+});
+
+it.each([
+  ["my-issues/new", "All", true],
+  ["new", "dev", true],
+  ["new", "All", false],
+])("assigns a new issue from %s to you only when Assignee was set to you (Assignee: %s)", async (path, assignee, assignToMe) => {
+  const scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  await watchScope();
+  const rpc = {
+    status: () => connected(),
+    getAutoFixerPreferences: () => preferences,
+    listMyPullRequests: () => mine([]),
+    listMyIssues: () => mine([]),
+    listItems: () => mine([]),
+    createIssue: () => ({ repo: "acme/widgets", number: 1, kind: "issue" }),
+  };
+  const slot = renderSlot(panel, { subPath: "issues" }, { settings, rpc });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Assignee" }).textContent).not.toBe("Assignee: me"));
+  fireEvent.click(screen.getByRole("combobox", { name: "Assignee" }));
+  fireEvent.click(await screen.findByRole("option", { name: `Assignee: ${assignee}` }));
+  slot.lifecycle.rerender(<Panel subPath={path} />);
+  if (path !== "new")
+    expect(slot.navigateCalls.at(-1)).toEqual({
+      method: "toPluginPanel", path: "gitea", options: { subPath: "new", replace: true },
+    });
+  fireEvent.click(await screen.findByRole("combobox", { name: "Repository" }));
+  fireEvent.click(await screen.findByRole("option", { name: "acme/widgets" }));
+  fireEvent.change(screen.getByLabelText("Issue title"), { target: { value: "Assigned?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create issue" }));
+  expect(slot.rpcCalls.find((call) => call.method === "createIssue")?.input)
+    .toMatchObject({ assignToMe });
+  Element.prototype.scrollIntoView = scrollIntoView;
 });

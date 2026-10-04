@@ -26,17 +26,26 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `extraRepos`         | empty               | Extra `owner/repo` names, comma or space separated.                                              |
 | `cacheEntryLimitMiB` | 16                  | Largest Gitea response the plugin reads and caches, in MiB. Larger responses fail with an error. |
 | `cacheLimitMiB`      | 64                  | Memory for each display cache (conversations, diffs, lists), in MiB.                             |
+| `tabOrder`           | empty               | Panel tab order as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`, `settings`.        |
+| `hiddenTabs`         | empty               | Panel tabs to hide, as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                |
 
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com
 bb plugin config gitea set extraRepos owner/repo,team/project
+bb plugin config gitea set tabOrder pulls,issues,auto-fixers,settings
 ```
 
 Repositories are the union of matching project `origin` remotes and `extraRepos`.
 
 ## Panel
 
-The Gitea panel has five tabs: **My PRs**, **My Issues**, **Issues**, **Pull requests**, and **Auto-fixers**. Lists filter by repository, state, and text. **My Issues** shows issues assigned to the signed-in account (not pull requests); creating an issue from that tab assigns it to you. Creating from **Issues** does not automatically assign anyone.
+The Gitea panel has four tabs: **Issues**, **Pull requests**, **Auto-fixers**, and **Settings**. It opens on the first visible tab, which is **Issues** by default. Lists filter by repository, state, and text.
+
+- **Issues** has an **Assignee** filter. It shows issues assigned to the signed-in account by default; choose **All** to see every issue. A new issue is assigned to you when the filter is set to you. The tab badge always counts your open assigned issues.
+- **Pull requests** has an **Author** filter. It shows pull requests by the signed-in account by default; choose **All** to see every pull request. The tab badge always counts your open pull requests.
+- **Settings** changes the tab order and hides tabs. Drag a tab by its handle, or focus the handle and press the up or down arrow key. Turn off a tab's switch to hide it. The **Settings** tab cannot be hidden. If the open tab is hidden, the panel switches to the first visible tab. **Settings** also shows the plugin's switch and select settings. These changes are saved in the `tabOrder`, `hiddenTabs`, and other plugin settings, so `bb plugin config gitea` shows them too.
+
+Panel links to `my-issues`, `my-prs`, and `my-issues/new` still work. They open **Issues** or **Pull requests** with the filter set to you.
 
 An issue or pull request opens on **Conversation**, where you can:
 
@@ -79,7 +88,7 @@ The environment is available only when the `origin` remote of the project's chec
 
 ## Auto-fix and Auto-merge
 
-Pull request rows in **My PRs** and **Pull requests** have two independent switches, both off by default:
+Pull request rows in **Pull requests** have two independent switches, both off by default:
 
 - **Auto-fix**: fix CI failures and address review feedback. It may commit, push, rebase, reply to and resolve review comments, and mark a WIP pull request ready. It never merges.
 - **Auto-merge**: merge once permissions, branch protection, required checks, approvals, and conflicts allow. It never changes code.
@@ -94,7 +103,7 @@ While idle, an auto-fixer waits with `bb gitea pr-watch`, which checks the pull 
 
 Gitea has no native auto-merge. The auto-fixer acts with your `tea` login's permissions, and the limits above are enforced by its instructions, not by Gitea. A reported merge or close counts only when Gitea confirms it.
 
-The top of **My PRs** has **Auto-fix all** and **Auto-merge all**. When on, the plugin checks every five minutes, and immediately when switched on, and starts auto-fixers for your open pull requests that have none. The same bar picks the model for new auto-fixers.
+The top of **Pull requests** has **Auto-fix all** and **Auto-merge all**. They apply only to your own pull requests, so they are turned off while **Author** is set to **All**. When on, the plugin checks every five minutes, and immediately when switched on, and starts auto-fixers for your open pull requests that have none. The same bar picks the model for new auto-fixers.
 
 ## CLI
 
