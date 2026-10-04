@@ -60,7 +60,7 @@ Auto-fixers: `setAutomation` (`repo`, `number`, and `fix`, `merge`, or both), `r
 
 - Lists cover at most 50 repositories, ten pages of 50 items per repository, and 200 items total. Errors are reported per repository.
 - Comments and reviews stop at 500, files at 500, checks at 100. A full result is marked as possibly truncated.
-- Panel caches: conversations 15 s fresh and 10 min stale, file sets 5 min fresh and 30 min stale, lists 15 s fresh and 10 min stale. Writes, settings changes, and rejected logins clear them. `show`, list commands, auto-fixers, and merges never use the cache.
+- Panel caches: conversations 15 s fresh and 10 min stale, file sets 5 min fresh and 30 min stale, lists 15 s fresh and 10 min stale. Writes, settings changes other than `tabOrder` and `hiddenTabs`, and rejected logins clear them. `show`, list commands, auto-fixers, and merges never use the cache.
 - Checks come from commit statuses.
 
 ## Settings
@@ -72,3 +72,6 @@ Set in the plugin settings page or with `bb plugin config gitea set <key> <value
 - `extraRepos`: optional `owner/repo` names, comma or space separated. They work without a project, but agent features need a project checkout.
 - `cacheEntryLimitMiB` (default 16): largest Gitea response read and cached. Larger reads fail with "exceeded the N MiB limit"; raise it for huge diffs.
 - `cacheLimitMiB` (default 64): memory for each display cache.
+- `tabOrder`: panel tab order as comma-separated tab ids `issues`, `pulls`, `auto-fixers`, `settings`. Empty uses that order. Unknown ids are ignored, and a missing tab is added at its default position. The panel opens on the first visible tab.
+- `hiddenTabs`: comma-separated tab ids to hide from the panel: `issues`, `pulls`, `auto-fixers`. The `settings` tab is always shown.
+- The panel's Settings tab changes `tabOrder` and `hiddenTabs` by drag and drop and switches, and shows every switch and select setting.
