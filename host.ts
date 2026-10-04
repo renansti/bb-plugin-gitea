@@ -1,8 +1,5 @@
 import path from "node:path";
-import {
-  experimental_defineHostEntry,
-  experimental_killProcessesWithCwdUnder,
-} from "@get-bb/plugin-sdk/host";
+import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { giteaBranchHostContract } from "./branch-contract.js";
 import {
   createWorktree,
@@ -76,7 +73,6 @@ export default experimental_defineHostEntry({
     },
     async remove(input, context) {
       try {
-        await experimental_killProcessesWithCwdUnder({ directory: input.path });
         await removeWorktree({ path: input.path, signal: context.signal });
         return { status: "removed" } as const;
       } catch (error) {
