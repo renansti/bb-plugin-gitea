@@ -706,6 +706,14 @@ export default async function plugin(bb: BbPluginApi) {
       experimental_schema: cacheMiBSchema,
       default: 64,
     },
+    autoFixerPlacement: {
+      type: "select",
+      label: "Auto-fixer threads appear in",
+      description:
+        "Gitea tab hides auto-fixer threads from the BB sidebar. Project sidebar shows them under the project that has the repository checkout. Applies to auto-fixer threads started after you change this.",
+      options: ["Gitea tab", "Project sidebar"],
+      default: "Gitea tab",
+    },
   });
   let config = await settings.get();
   let loginLookup: Promise<TeaLogin> | null = null;
@@ -1978,7 +1986,8 @@ export default async function plugin(bb: BbPluginApi) {
             },
           }
         : { type: "project-default" },
-      visibility: "hidden",
+      visibility:
+        config.autoFixerPlacement === "Project sidebar" ? "visible" : "hidden",
       title: `${giteaAutoFixerTitlePrefix} ${key}: ${title}`.slice(0, 120),
       prompt,
       providerId: execution.providerId,
