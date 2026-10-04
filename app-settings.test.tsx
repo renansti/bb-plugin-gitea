@@ -173,6 +173,71 @@ it("drops a cancelled drag without saving", () => {
   expect(updateSettings).not.toHaveBeenCalled();
 });
 
+function rowLabels() {
+  return screen.getAllByRole("listitem").map((row) => row.textContent);
+}
+
+function stubRowBoxes() {
+  for (const [index, row] of screen.getAllByRole("listitem").entries())
+    row.getBoundingClientRect = () => ({ top: index * 40, height: 40 }) as DOMRect;
+}
+
+it("does not start a drag from the row label", () => {
+  const { updateSettings } = render("settings");
+  stubRowBoxes();
+  const label = screen.getByText("Issues", { selector: "li span" });
+  fireEvent.pointerDown(label, { button: 0, pointerId: 1, clientY: 20 });
+  fireEvent.pointerMove(label, { pointerId: 1, clientY: 150 });
+  fireEvent.pointerUp(label, { pointerId: 1, clientY: 150 });
+  expect(rowLabels()[0]).toBe("Issues");
+  expect(updateSettings).not.toHaveBeenCalled();
+});
+
+it("puts the row back when Escape is pressed during a drag", () => {
+  const { updateSettings } = render("settings");
+  stubRowBoxes();
+  const handle = screen.getByRole("button", { name: "Move Issues" });
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 20 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: 150 });
+  expect(rowLabels()[0]).toBe("Pull requests");
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(rowLabels()[0]).toBe("Issues");
+  fireEvent.pointerUp(document.body, { pointerId: 1, clientY: 150 });
+  expect(updateSettings).not.toHaveBeenCalled();
+});
+
+it("drops the row when the pointer is released outside the list", async () => {
+  const { updateSettings } = render("settings");
+  stubRowBoxes();
+  const handle = screen.getByRole("button", { name: "Move Issues" });
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 20 });
+  fireEvent.pointerMove(document.body, { pointerId: 1, clientY: 500 });
+  await act(async () => fireEvent.pointerUp(document.body, { pointerId: 1, clientY: 500 }));
+  expect(updateSettings).toHaveBeenLastCalledWith({
+    pluginId: "test-plugin",
+    values: { tabOrder: "pulls,auto-fixers,settings,issues" },
+  });
+  updateSettings.mockClear();
+  fireEvent.pointerMove(document.body, { pointerId: 1, clientY: 0 });
+  fireEvent.pointerUp(document.body, { pointerId: 1, clientY: 0 });
+  expect(rowLabels()[3]).toBe("Issues");
+  expect(updateSettings).not.toHaveBeenCalled();
+});
+
+it("keeps the dropped order while saving and restores it when the save fails", async () => {
+  const { updateSettings } = render("settings");
+  let fail!: (error: Error) => void;
+  updateSettings.mockImplementationOnce(() => new Promise((_, reject) => (fail = reject)));
+  stubRowBoxes();
+  const handle = screen.getByRole("button", { name: "Move Issues" });
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: 20 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: 110 });
+  fireEvent.pointerUp(handle, { pointerId: 1, clientY: 110 });
+  expect(rowLabels()[2]).toBe("Issues");
+  await act(async () => fail(new Error("Settings are read-only")));
+  expect(rowLabels()[0]).toBe("Issues");
+});
+
 it("shows the plugin's switch and select settings from their definitions", async () => {
   const { updateSettings } = render("settings", { compact: true } as never);
   const placement = await screen.findByRole("combobox", { name: "Auto-fixer threads appear in" });
