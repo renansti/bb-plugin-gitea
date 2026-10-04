@@ -244,15 +244,16 @@ it("returns no branches for a project that is not on Gitea", async () => {
   ).resolves.toEqual({ repo: null, branches: [], truncated: false, error: null });
 });
 
-it("reads CI states separately and keeps finished results longer than running ones", async () => {
+it("reads CI states for my branches or other branches on request, and keeps finished results longer", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   disposers.push(() => void vi.useRealTimers());
   const reads: string[] = [];
   const results: Record<string, "passing" | "running"> = { "sha-1": "passing", "sha-2": "running" };
   const openPull = (number: number) => ({
     number,
+    title: `PR ${number}`,
     url: `https://gitea.example/acme/widgets/pulls/${number}`,
-    author: "dev",
+    author: number === 1 ? "dev" : "ops",
     headBranch: `b${number}`,
     state: "open" as const,
     status: "checking" as const,
@@ -276,19 +277,38 @@ it("reads CI states separately and keeps finished results longer than running on
       },
     },
   });
-  const statuses = () =>
-    host.harness.behavior.callRpc("remotePullStatuses", { projectId: "project-1" });
+  const statuses = (others: boolean) =>
+    host.harness.behavior.callRpc("remotePullStatuses", { projectId: "project-1", others });
   await expect(
     host.harness.behavior.callRpc("remoteBranches", { projectId: "project-1", refresh: false }),
   ).resolves.toMatchObject({ branches: [{ pull: { status: "checking" } }, { pull: { status: "checking" } }] });
   expect(reads).toEqual([]);
-  await expect(statuses()).resolves.toEqual({
-    statuses: [
-      { number: 1, status: "passing" },
-      { number: 2, status: "running" },
-    ],
+  await expect(statuses(false)).resolves.toEqual({
+    statuses: [{ number: 1, status: "passing" }],
+  });
+  expect(reads).toEqual(["sha-1"]);
+  await expect(statuses(true)).resolves.toEqual({
+    statuses: [{ number: 2, status: "running" }],
   });
   vi.setSystemTime(Date.now() + 25_000);
-  await statuses();
+  await statuses(false);
+  await statuses(true);
   expect(reads).toEqual(["sha-1", "sha-2", "sha-2"]);
+});
+
+it("uses the checkout's own origin, not the remote BB recorded for the project", async () => {
+  const checkouts: Record<string, string | null> = {
+    "/src/moved": "acme/widgets",
+    "/src/elsewhere": null,
+  };
+  const { provider } = start({ deps: { repoFromCheckout: async (path) => checkouts[path] ?? null } });
+  const check = async (path: string) =>
+    provider.availability!({
+      gitRemote: "https://github.com/acme/widgets.git",
+      project: {},
+      host: {},
+      projectCheckout: { path },
+    } as never);
+  await expect(check("/src/moved")).resolves.toEqual({ status: "available" });
+  await expect(check("/src/elsewhere")).resolves.toMatchObject({ status: "unavailable" });
 });

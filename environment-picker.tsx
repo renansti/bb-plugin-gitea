@@ -117,12 +117,19 @@ const PULL_BADGE: Record<PullStatus, { className: string; label: string }> = {
   checking: { className: "bg-muted text-muted-foreground", label: "Checking CI" },
 };
 
-function PullBadge({ pull }: { pull: NonNullable<RemoteBranch["pull"]> }) {
+function PullBadge({
+  pull,
+  ciLoading,
+}: {
+  pull: NonNullable<RemoteBranch["pull"]>;
+  ciLoading: boolean;
+}) {
   const badge = PULL_BADGE[pull.status];
+  const label = pull.status === "checking" && !ciLoading ? "CI not checked" : badge.label;
   return (
     <span
       className={cn("shrink-0 rounded px-1.5 py-px text-[11px] font-medium leading-4", badge.className)}
-      title={`Pull request #${pull.number}: ${badge.label}`}
+      title={`Pull request #${pull.number}: ${label}`}
       data-status={pull.status}
     >
       #{pull.number}
@@ -212,16 +219,27 @@ export function GiteaBranchInputsControl({
       .catch(() => undefined);
   }, [projectId, rpc, reloadRemote]);
 
-  const loadStatuses = useCallback(
-    (key: string) => rpc.call("remotePullStatuses", { projectId: key }),
+  // Other people's branches stay hidden until asked for or searched, so their CI states are read only then.
+  const [othersRequested, setOthersRequested] = useState(false);
+  const showOthers = othersRequested || deferredQuery.trim().length > 0;
+  const loadMyStatuses = useCallback(
+    (key: string) => rpc.call("remotePullStatuses", { projectId: key, others: false }),
     [rpc],
   );
-  const [ciState, reloadStatuses] = useScoped(projectId, loadStatuses);
+  const loadOtherStatuses = useCallback(
+    (key: string) => rpc.call("remotePullStatuses", { projectId: key, others: true }),
+    [rpc],
+  );
+  const [myCi, reloadMyCi] = useScoped(projectId, loadMyStatuses);
+  const [otherCi, reloadOtherCi] = useScoped(showOthers ? projectId : null, loadOtherStatuses);
   const remoteValue = remote?.value;
   // CI states load after the branch list, so the list shows without waiting for them.
   useEffect(() => {
-    if (remoteValue) void reloadStatuses();
-  }, [remoteValue, reloadStatuses]);
+    if (remoteValue) void reloadMyCi();
+  }, [remoteValue, reloadMyCi]);
+  useEffect(() => {
+    if (remoteValue && showOthers) void reloadOtherCi();
+  }, [remoteValue, showOthers, reloadOtherCi]);
 
   const scopeKey = projectId !== null && hostId !== null ? `${projectId}\n${hostId}` : null;
   const loadWorktrees = useCallback(
@@ -254,11 +272,19 @@ export function GiteaBranchInputsControl({
   }, [open, selectedIntent]);
 
   const ciStatus = new Map(
-    (ciState?.value?.statuses ?? []).map((entry) => [entry.number, entry.status]),
+    [...(myCi?.value?.statuses ?? []), ...(otherCi?.value?.statuses ?? [])].map((entry) => [
+      entry.number,
+      entry.status,
+    ]),
   );
   const remoteBranches: RemoteBranch[] = (remote?.value?.branches ?? [])
     .filter((branch) =>
-      matches(deferredQuery, branch.name, branch.pull ? `#${branch.pull.number}` : ""),
+      matches(
+        deferredQuery,
+        branch.name,
+        branch.pull ? `#${branch.pull.number}` : "",
+        branch.pull?.title ?? "",
+      ),
     )
     .map((branch) => {
       const status = branch.pull ? ciStatus.get(branch.pull.number) : undefined;
@@ -295,7 +321,7 @@ export function GiteaBranchInputsControl({
     const defaultLabel = defaultBase?.value?.branch ?? "default";
     switch (inputs?.kind) {
       case "remote":
-        return { prefix: "Remote branch:", value: inputs.name, title: `Work on ${inputs.name} in a new worktree` };
+        return { prefix: null, value: inputs.name, title: `Work on ${inputs.name} in a new worktree` };
       case "existing":
         return {
           prefix: "Reuse:",
@@ -318,7 +344,9 @@ export function GiteaBranchInputsControl({
       const worktree = worktrees.find((candidate) => !candidate.prunable);
       return worktree ? () => submit({ kind: "existing", path: worktree.path }, false) : null;
     }
-    const firstRemote = remoteBranches[0];
+    const firstRemote = remoteBranches.find(
+      (branch) => showOthers || branch.group !== "other",
+    );
     return firstRemote ? () => pickRemote(firstRemote.name) : null;
   })();
 
@@ -331,11 +359,27 @@ export function GiteaBranchInputsControl({
           (inputs?.kind === "remote" && inputs.name === branch.name) ||
           (inputs?.kind === "existing" && inputs.remoteBranch === branch.name)
         }
-        title={branch.name}
+        title={branch.pull ? `${branch.pull.title}\n${branch.name}` : branch.name}
         onSelect={() => pickRemote(branch.name)}
       >
-        <span className="min-w-0 flex-1 truncate">{branch.name}</span>
-        {branch.pull ? <PullBadge pull={branch.pull} /> : null}
+        {branch.pull ? (
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="min-w-0 truncate font-medium text-foreground">
+              {branch.pull.title || branch.name}
+            </span>
+            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+              {branch.name}
+            </span>
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1 truncate">{branch.name}</span>
+        )}
+        {branch.pull ? (
+          <PullBadge
+            pull={branch.pull}
+            ciLoading={branch.group === "other" ? !otherCi || otherCi.loading : !myCi || myCi.loading}
+          />
+        ) : null}
       </Row>
     ));
   const yours = remoteBranches.filter((branch) => branch.group !== "other");
@@ -355,11 +399,24 @@ export function GiteaBranchInputsControl({
             {branchRows(yours)}
           </>
         ) : null}
-        {others.length > 0 ? (
+        {yours.length === 0 && !showOthers ? <Note>You have no branches here.</Note> : null}
+        {others.length > 0 && showOthers ? (
           <>
             <SectionHeader label="Other branches:" />
             {branchRows(others)}
           </>
+        ) : null}
+        {others.length > 0 && !showOthers ? (
+          <Row
+            icon="ChevronDown"
+            selected={false}
+            title="List branches from other people and check their pull requests"
+            onSelect={() => setOthersRequested(true)}
+          >
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              Show other branches ({others.length})
+            </span>
+          </Row>
         ) : null}
         {remote?.value?.truncated ? <Note>Showing the first branches only.</Note> : null}
       </>
@@ -379,11 +436,16 @@ export function GiteaBranchInputsControl({
           className={cn(LIST_HOVER_TRANSITION, TRIGGER_CLASS_NAME)}
         >
           <span className="contents" title={trigger.title}>
-            <Icon name="GitMerge" className={COARSE_POINTER_COMPACT_ICON_SIZE_SHRINK_CLASS} />
+            <Icon
+              name={inputs?.kind === "remote" ? "GitBranch" : "GitMerge"}
+              className={COARSE_POINTER_COMPACT_ICON_SIZE_SHRINK_CLASS}
+            />
             <span className="flex min-w-0 items-baseline gap-1 truncate">
-              <span data-promptbox-hide-compact="" className="shrink-0 text-muted-foreground">
-                {trigger.prefix}
-              </span>
+              {trigger.prefix ? (
+                <span data-promptbox-hide-compact="" className="shrink-0 text-muted-foreground">
+                  {trigger.prefix}
+                </span>
+              ) : null}
               <span className="min-w-0 truncate font-medium text-foreground">{trigger.value}</span>
             </span>
           </span>

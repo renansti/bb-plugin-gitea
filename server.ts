@@ -2512,6 +2512,7 @@ export default async function plugin(bb: BbPluginApi) {
         return [
           {
             number: Number(pull.number),
+            title: draftTitle(text(pull.title), false),
             url: safeLink(base, pull.html_url),
             author: text(field(pull.user).login),
             headBranch,

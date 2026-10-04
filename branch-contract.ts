@@ -102,6 +102,7 @@ export const remoteBranchSchema = z
     pull: z
       .object({
         number: z.number().int(),
+        title: z.string(),
         url: z.string(),
         status: pullStatusSchema,
       })
@@ -130,7 +131,13 @@ export const branchRpcMethods = {
       .strict(),
   },
   remotePullStatuses: {
-    input: z.object({ projectId: z.string().min(1) }).strict(),
+    input: z
+      .object({
+        projectId: z.string().min(1),
+        /** Read the CI states of other people's branches instead of the signed-in user's. */
+        others: z.boolean().default(false),
+      })
+      .strict(),
     output: z
       .object({
         statuses: z.array(

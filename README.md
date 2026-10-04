@@ -57,9 +57,9 @@ When you start a thread, pick **Gitea** in the environment picker. Its menu has 
 
 - **Work in**: **New worktree** or **Existing worktree**, the same choices as BB's Worktree environment.
 - **Your branches**: branches with an open pull request from you, newest pull request update first, then branches whose last commit is yours, newest commit first.
-- **Other branches**: all other branches of the project's Gitea repository, newest commit first.
+- **Other branches**: all other branches of the project's Gitea repository, newest commit first. This section is hidden until you select **Show other branches** or type a search.
 
-A branch with a pull request shows a badge with its number. The color shows the pull request's state:
+A branch with a pull request shows the pull request title, with the branch name below it, and a badge with its number. The color shows the pull request's state:
 
 | Color  | State |
 | ------ | ----- |
@@ -69,13 +69,13 @@ A branch with a pull request shows a badge with its number. The color shows the 
 | Green  | CI passing |
 | Purple | Merged |
 
-The badge shows the newest open pull request for the branch, or else the newest merged one. Merged badges come from the 100 most recently updated closed pull requests. CI states load after the branch list, so badges start grey and then change color. CI states are read for at most 60 open pull requests. A passing or failing result is kept for 5 minutes per commit, and a running one for 20 seconds.
+The badge shows the newest open pull request for the branch, or else the newest merged one. Merged badges come from the 100 most recently updated closed pull requests. CI states load after the branch list, so badges start grey and then change color. The CI states of other people's pull requests are read only when **Other branches** is shown, for at most 100 of them. A passing or failing result is kept for 5 minutes per commit, and a running one for 20 seconds.
 
 With **New worktree** and no branch picked, the thread gets a new branch from the default branch. Picking a branch creates a worktree on that branch itself. The plugin fetches the branch from `origin`, then uses the local branch or creates one that tracks `origin`.
 
 Under **Existing worktree**, pick a worktree, then pick **Keep current branch** or a branch. A branch switches that worktree to it. The switch fails if the worktree has uncommitted changes.
 
-The environment is available only when the project's `origin` remote is on the configured Gitea instance. Branches from forks are not listed, because they cannot be checked out from `origin`. Worktrees go under the plugin's data folder on the machine that has the project checkout. The plugin does not copy `.worktreeinclude` files into new worktrees.
+The environment is available only when the `origin` remote of the project's checkout is on the configured Gitea instance. Branches from forks are not listed, because they cannot be checked out from `origin`. Worktrees go under the plugin's data folder on the machine that has the project checkout. The plugin does not copy `.worktreeinclude` files into new worktrees.
 
 ## Auto-fix and Auto-merge
 

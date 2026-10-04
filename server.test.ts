@@ -3199,7 +3199,7 @@ it("lists a project's Gitea branches with pull request badges and skips fork pul
       {
         name: "review",
         group: "pull",
-        pull: { number: 7, url: url(7), status: "checking" },
+        pull: { number: 7, title: "PR 7", url: url(7), status: "checking" },
         updatedAt: "2026-09-02T00:00:00Z",
       },
       { name: "mine", group: "mine", pull: null, updatedAt: "2026-09-05T00:00:00Z" },
@@ -3208,13 +3208,13 @@ it("lists a project's Gitea branches with pull request badges and skips fork pul
       {
         name: "wip",
         group: "other",
-        pull: { number: 9, url: url(9), status: "draft" },
+        pull: { number: 9, title: "not ready", url: url(9), status: "draft" },
         updatedAt: "2026-09-03T00:00:00Z",
       },
       {
         name: "shipped",
         group: "other",
-        pull: { number: 3, url: url(3), status: "merged" },
+        pull: { number: 3, title: "PR 3", url: url(3), status: "merged" },
         updatedAt: "2026-08-01T00:00:00Z",
       },
     ],

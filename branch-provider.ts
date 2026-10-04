@@ -22,7 +22,7 @@ const REMOTE_BRANCH_TTL_MS = 30_000;
 /** A finished CI result for a commit rarely changes, so it is kept longer than one still running. */
 const SETTLED_CI_TTL_MS = 5 * 60_000;
 const OPEN_CI_TTL_MS = 20_000;
-const MAX_CI_READS = 60;
+const MAX_CI_READS = 100;
 const ADOPTED_RESOURCE = { adopted: true } as const;
 
 export interface RemoteBranchData {
@@ -83,13 +83,23 @@ export function registerBranchProvider(
       deps.readRemoteBranches(repo, signal),
       deps.login(),
     ]);
+    const branches = orderRemoteBranches({ ...data, login });
+    const shaByPull = new Map(data.pulls.map((pull) => [pull.number, pull.sha]));
     return {
-      branches: orderRemoteBranches({ ...data, login }),
+      branches,
       truncated: data.truncated,
-      ciPulls: data.pulls
-        .filter((pull) => pull.status === "checking")
-        .slice(0, MAX_CI_READS)
-        .map(({ number, sha }) => ({ number, sha })),
+      // Open pull requests whose CI state is read on request, in display order.
+      ciPulls: branches.flatMap((branch) =>
+        branch.pull?.status === "checking"
+          ? [
+              {
+                number: branch.pull.number,
+                sha: shaByPull.get(branch.pull.number) ?? "",
+                mine: branch.group !== "other",
+              },
+            ]
+          : [],
+      ),
     };
   }
 
@@ -204,9 +214,16 @@ export function registerBranchProvider(
     requires: { gitCheckout: true },
     inputs: giteaBranchInputsSchema,
     policy: { pathKeys: "per-attempt" },
-    availability(context) {
-      if (context.gitRemote === null || deps.repoFromRemote(context.gitRemote))
-        return { status: "available" };
+    async availability(context) {
+      // The checkout's own origin wins over the remote URL BB recorded for the
+      // project, which can be out of date after a repository moves to Gitea.
+      const repo =
+        context.projectCheckout !== null
+          ? await deps.repoFromCheckout(context.projectCheckout.path)
+          : context.gitRemote === null
+            ? "unknown"
+            : deps.repoFromRemote(context.gitRemote);
+      if (repo !== null) return { status: "available" };
       return {
         status: "unavailable",
         message: "This project's origin remote is not on the configured Gitea instance.",
@@ -279,15 +296,18 @@ export function registerBranchProvider(
       }
     },
     async remotePullStatuses(
-      { projectId },
+      { projectId, others },
       { experimental_signal: signal }: { experimental_signal?: AbortSignal } = {},
     ) {
       const source = await checkoutSource(projectId, null);
       const repo = source ? await deps.repoFromCheckout(source.path) : null;
       if (repo === null) return { statuses: [] };
       const { ciPulls } = await cachedBranches(repo, false, signal);
+      const wanted = ciPulls
+        .filter((pull) => (others ? !pull.mine : pull.mine))
+        .slice(0, MAX_CI_READS);
       const statuses = await Promise.all(
-        ciPulls.map(async ({ number, sha }) => ({
+        wanted.map(async ({ number, sha }) => ({
           number,
           status: await cachedCiStatus(repo, sha, signal).catch((error: unknown) => {
             if (signal?.aborted) throw error;

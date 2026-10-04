@@ -24,6 +24,7 @@ export interface RemoteBranchInput {
 
 export interface PullInput {
   number: number;
+  title: string;
   url: string;
   author: string;
   headBranch: string;
@@ -39,7 +40,7 @@ export interface OrderedRemoteBranch {
   name: string;
   /** `pull` and `mine` are the signed-in user's branches; `other` is everyone else's. */
   group: RemoteBranchGroup;
-  pull: { number: number; url: string; status: PullStatus } | null;
+  pull: { number: number; title: string; url: string; status: PullStatus } | null;
   updatedAt: string;
 }
 
@@ -89,7 +90,7 @@ export function orderRemoteBranches(args: {
     .map((branch): OrderedRemoteBranch => {
       const badge = anyOpen.get(branch.name) ?? merged.get(branch.name);
       const pull = badge
-        ? { number: badge.number, url: badge.url, status: badge.status }
+        ? { number: badge.number, title: badge.title, url: badge.url, status: badge.status }
         : null;
       const mine = myOpen.get(branch.name);
       if (mine)

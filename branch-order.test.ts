@@ -14,6 +14,7 @@ function pull(
 ): PullInput {
   return {
     number,
+    title: `PR ${number}`,
     url: `https://gitea.example/acme/widgets/pulls/${number}`,
     author,
     headBranch,
@@ -54,6 +55,7 @@ it("lists my pull request branches, then my branches, then the rest, newest firs
   ]);
   expect(ordered[0]?.pull).toEqual({
     number: 2,
+    title: "PR 2",
     url: "https://gitea.example/acme/widgets/pulls/2",
     status: "passing",
   });
@@ -93,13 +95,13 @@ it("shows a merged pull request only when the branch has no open one, and does n
     {
       name: "reopened",
       group: "other",
-      pull: { number: 8, url: "https://gitea.example/acme/widgets/pulls/8", status: "draft" },
+      pull: { number: 8, title: "PR 8", url: "https://gitea.example/acme/widgets/pulls/8", status: "draft" },
       updatedAt: "2026-09-02T00:00:00Z",
     },
     {
       name: "shipped",
       group: "other",
-      pull: { number: 6, url: "https://gitea.example/acme/widgets/pulls/6", status: "merged" },
+      pull: { number: 6, title: "PR 6", url: "https://gitea.example/acme/widgets/pulls/6", status: "merged" },
       updatedAt: "2026-09-01T00:00:00Z",
     },
   ]);
