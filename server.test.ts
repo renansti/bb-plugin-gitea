@@ -36,6 +36,7 @@ const defaultSettings = {
   extraRepos: "acme/widgets",
   cacheEntryLimitMiB: 16,
   cacheLimitMiB: 64,
+  autoFixerPlacement: "Gitea tab",
 };
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -2242,6 +2243,39 @@ it("replaces a retired auto-fixer workspace before retrying", async () => {
     threadId: "auto-fixer-2",
     status: "watching",
   });
+});
+
+it("shows auto-fixers started after Project sidebar is chosen in the sidebar and keeps listing every auto-fixer", async () => {
+  const { host, patchThread } = await startAutoFixers();
+  const visibility = () =>
+    host.harness.sdk
+      .callsTo("threads.spawn")
+      .map((call) => (call[0] as { visibility: string }).visibility);
+  await enable(host, pr42);
+  await host.harness.behavior.setSettings({
+    autoFixerPlacement: "Project sidebar",
+  });
+  await enable(host, { repo: "acme/widgets", number: 44 });
+  expect(visibility()).toEqual(["hidden", "visible"]);
+  await expect(autoFixerStatus(host)).resolves.toMatchObject({
+    threadId: "auto-fixer-1",
+    status: "watching",
+  });
+
+  await idle(host, "BB_GITEA_AUTO_FIX: FAILED");
+  patchThread("auto-fixer-1", { canRestoreEnvironment: true });
+  await rpc(host, "retryAutoFixer", pr42);
+  expect(visibility()).toEqual(["hidden", "visible", "visible"]);
+  await expect(enable(host, { repo: "ops/api", number: 7 })).rejects.toThrow(
+    "no BB project has a checkout",
+  );
+  const { sessions } = giteaRpcContract.listAutoFixerSessions.output.parse(
+    await rpc(host, "listAutoFixerSessions"),
+  );
+  expect(sessions.map((session) => session.threadId).sort()).toEqual([
+    "auto-fixer-2",
+    "auto-fixer-3",
+  ]);
 });
 
 it("replaces a legacy auto-fixer on another host without deleting its thread", async () => {

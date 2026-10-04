@@ -28,11 +28,13 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `cacheLimitMiB`      | 64                  | Memory for each display cache (conversations, diffs, lists), in MiB.                             |
 | `tabOrder`           | empty               | Panel tab order as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`, `settings`.        |
 | `hiddenTabs`         | empty               | Panel tabs to hide, as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                |
+| `autoFixerPlacement` | `Gitea tab`         | Where new auto-fixer threads appear: `Gitea tab` or `Project sidebar`.                           |
 
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com
 bb plugin config gitea set extraRepos owner/repo,team/project
 bb plugin config gitea set tabOrder pulls,issues,auto-fixers,settings
+bb plugin config gitea set autoFixerPlacement "Project sidebar"
 ```
 
 Repositories are the union of matching project `origin` remotes and `extraRepos`.
@@ -93,7 +95,9 @@ Pull request rows in **Pull requests** have two independent switches, both off b
 - **Auto-fix**: fix CI failures and address review feedback. It may commit, push, rebase, reply to and resolve review comments, and mark a WIP pull request ready. It never merges.
 - **Auto-merge**: merge once permissions, branch protection, required checks, approvals, and conflicts allow. It never changes code.
 
-Turning either on starts an auto-fixer: a hidden BB thread that watches the pull request until it is merged or closed, or until it needs you. Changing a switch updates the same thread. Turning both off stops it and archives the thread. **Retry** resumes a failed or needs-you auto-fixer.
+Turning either on starts an auto-fixer: a BB thread that watches the pull request until it is merged or closed, or until it needs you. Changing a switch updates the same thread. Turning both off stops it and archives the thread. **Retry** resumes a failed or needs-you auto-fixer.
+
+An auto-fixer thread starts in the BB project whose checkout has the repository. The `autoFixerPlacement` setting chooses where it appears. With **Gitea tab** (the default), the thread is hidden from the BB sidebar. With **Project sidebar**, it also shows in the sidebar under that project. The setting applies to auto-fixer threads started after you change it, including replacements started by **Retry**. Existing threads stay where they are. The **Auto-fixers** tab lists every auto-fixer either way.
 
 Closed or merged PRs automatically archive their auto-fixers, including paused and failed sessions. BB stops the thread, withdraws plugin-owned queued messages, and retires its terminals and managed environment through the thread archive lifecycle. Failed cleanup retries automatically. Archived sessions are hidden by default; select **Show archived** to view their history. A reopened closed PR can start a new auto-fixer.
 
