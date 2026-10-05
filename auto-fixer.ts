@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  autoFixerProtocol,
+  fillPrompt,
+  promptText,
+  type AgentPromptId,
+  type AgentPromptOverrides,
+  type PromptValues,
+} from "./agent-prompts.js";
 
 export const autoFixerExecutionSchema = z
   .object({
@@ -573,34 +581,6 @@ export function autoStartTargets<
   );
 }
 
-function policyInstructions(
-  policy: AutoFixerPolicy,
-  flags: string,
-  api: string,
-  number: number,
-): string[] {
-  const fix = policy.fix
-    ? [
-        "Auto-fix is on. Fix failing CI checks and address review feedback.",
-        `You can fix, commit, push, rebase, reply to review comments (\`tea pulls reply ${flags} ${number} <comment id> <reply>\`), resolve addressed review comments (\`tea pulls resolve ${flags} <comment id>\`), and mark a WIP pull request ready for review (\`tea pulls edit ${flags} --ready ${number}\`, which only strips a leading \`WIP: \` or \`[WIP]\` title prefix). Do not change the title otherwise.`,
-        "Test each code change before you push it.",
-      ]
-    : [
-        "Auto-fix is off. Do not change code, commit, push, rebase, reply to or resolve review comments, or edit the pull request.",
-        "If a required check fails, changes are requested, or the branch conflicts with its base, finish with NEEDS_YOU and say what blocks the merge.",
-      ];
-  const merge = policy.merge
-    ? [
-        "Auto-merge is on. Gitea has no auto-merge setting that you may enable; do not try to schedule one.",
-        `Merge only with \`tea pulls merge ${flags} --style <style> ${number}\`, and only when your Gitea permissions allow it, branch protection is satisfied, every required status check passes, and required approvals are present.`,
-        `Use the repository's default merge style (\`default_merge_style\` from \`${api}\`). Use squash only if the repository or a human requires it.`,
-      ]
-    : [
-        "Auto-merge is off. Never merge this pull request, and do not enable or schedule a merge. A human merges it; keep watching until Gitea reports it merged or closed.",
-      ];
-  return [...fix, ...merge];
-}
-
 export function buildAutoFixerPrompt(input: {
   repo: string;
   number: number;
@@ -608,43 +588,29 @@ export function buildAutoFixerPrompt(input: {
   baseUrl: string;
   login: string;
   policy: AutoFixerPolicy;
+  overrides?: AgentPromptOverrides;
 }): string {
-  const ref = `${input.repo}#${input.number}`;
-  const flags = `--login ${input.login} --repo ${input.repo}`;
-  const api = `tea api --login ${input.login} /api/v1/repos/${input.repo}`;
-  const watch = `bb gitea pr-watch ${input.repo} ${input.number} --since <token>`;
+  const overrides = input.overrides ?? {};
+  const values: PromptValues = {
+    repo: input.repo,
+    number: input.number,
+    ref: `${input.repo}#${input.number}`,
+    title: input.title,
+    url: new URL(`${input.repo}/pulls/${input.number}`, input.baseUrl).href,
+    baseUrl: input.baseUrl,
+    login: input.login,
+    teaFlags: `--login ${input.login} --repo ${input.repo}`,
+    teaApi: `tea api --login ${input.login} /api/v1/repos/${input.repo}`,
+  };
+  const fill = (id: AgentPromptId) => fillPrompt(promptText(overrides, id), values);
   return [
-    `You are the Gitea PR auto-fixer for ${ref}: ${input.title}`,
-    `Gitea instance: ${input.baseUrl}`,
+    fill("autoFixer"),
     "",
-    "Use the existing checkout. Do not clone the repository or create a BB project.",
-    `Use the tea CLI with the explicit login profile \`${input.login}\` on every command. Do not use gh or GitHub-specific tooling.`,
-    "Before you act, read the full PR, diff, conversation, reviews, review comments, and commit statuses:",
-    `- \`tea pulls ${flags} --comments ${input.number}\``,
-    `- \`${api}/pulls/${input.number}\` and \`${api}/pulls/${input.number}.diff\``,
-    `- \`tea pulls review-comments ${flags} ${input.number}\``,
-    `- \`${api}/commits/<head sha>/status\``,
-    "",
-    "Repeat these steps while the PR is open:",
-    "1. Read the current PR state. Reread the diff and conversation only when the head, comments, or reviews changed.",
-    "2. Complete the next permitted action that can advance the PR.",
-    "3. After each state change, return to step 1.",
-    `4. If no permitted action is possible, wait for a change: \`${watch}\`, passing the token from its previous output as \`--since\` (omit it the first time). It checks the PR and its CI status every 30 seconds and returns within a few minutes. On \`changed\`, return to step 1. On \`unchanged\`, run it again. On \`inactive\`, this auto-fixer was stopped: end your turn without further action.`,
-    "Do not use `sleep` to wait for Gitea.",
-    "",
-    "These Auto-fix and Auto-merge settings replace any earlier instructions in this thread:",
-    ...policyInstructions(input.policy, flags, api, input.number),
-    "Only missing credentials, missing permissions, destructive choices, and product or scope decisions require a human.",
-    "Stay in this turn until the PR is merged, closed, manually stopped, or requires a human.",
-    "",
-    "Your final response must contain exactly one of these markers:",
-    "BB_GITEA_AUTO_FIX: MERGED",
-    "BB_GITEA_AUTO_FIX: CLOSED",
-    "BB_GITEA_AUTO_FIX: NEEDS_YOU",
-    "BB_GITEA_AUTO_FIX: FAILED",
-    "Use FAILED only for an execution failure.",
-    "",
-    `Start by running: tea pulls ${flags} --comments ${input.number}`,
+    fillPrompt(autoFixerProtocol, {
+      ...values,
+      autoFixRules: fill(input.policy.fix ? "autoFixOn" : "autoFixOff"),
+      autoMergeRules: fill(input.policy.merge ? "autoMergeOn" : "autoMergeOff"),
+    }),
   ].join("\n");
 }
 

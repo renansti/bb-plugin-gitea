@@ -24,6 +24,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { PluginRpcClient, PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import type { giteaRpcContract } from "./server.js";
+import { AgentPromptSettings } from "./agent-prompts-editor.js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -3303,6 +3304,13 @@ export default definePluginApp((app) => {
     icon: "gitea/teacup",
     path: "gitea",
     component: GiteaPanel,
+  });
+  app.slots.settingsSection({
+    id: "prompts",
+    title: "Agent prompts",
+    description:
+      "Change the instructions the plugin sends to agents. Placeholders such as {repo} are filled in when the prompt is sent.",
+    component: AgentPromptSettings,
   });
   app.slots.threadPanelAction({
     id: "item",

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add an **Agent prompts** section to the plugin settings. It edits the auto-fixer prompt, the Auto-fix and Auto-merge rules, and the Send to agent prompts. Prompts accept placeholders such as `{repo}` and `{title}`. The auto-fixer wait command and end markers stay fixed.
+
 ## 1.0.5 - 2026-10-01
 
 ### Fixed
