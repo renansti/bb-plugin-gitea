@@ -6,7 +6,7 @@ import {
   parseTabOrder,
 } from "./panel-tabs.js";
 
-const defaults = ["issues", "pulls", "auto-fixers", "settings"] as const;
+const defaults = ["issues", "pulls", "auto-fixers"] as const;
 
 describe("panel tab order", () => {
   it("uses the default order when nothing is saved", () => {
@@ -14,8 +14,7 @@ describe("panel tab order", () => {
   });
 
   it("keeps the saved order and ignores spaces", () => {
-    expect(parseTabOrder(defaults, "settings, auto-fixers ,pulls,issues")).toEqual([
-      "settings",
+    expect(parseTabOrder(defaults, " auto-fixers ,pulls,issues")).toEqual([
       "auto-fixers",
       "pulls",
       "issues",
@@ -23,63 +22,71 @@ describe("panel tab order", () => {
   });
 
   it("ignores unknown and repeated ids", () => {
-    expect(parseTabOrder(defaults, "my-prs,pulls,,pulls,issues,removed,settings,auto-fixers")).toEqual([
+    expect(parseTabOrder(defaults, "my-prs,pulls,,pulls,removed,auto-fixers,issues")).toEqual([
       "pulls",
-      "issues",
-      "settings",
       "auto-fixers",
+      "issues",
     ]);
   });
 
-  it("adds missing tabs at their default position", () => {
-    expect(parseTabOrder(defaults, "settings,pulls")).toEqual([
-      "issues",
-      "settings",
+  it("ignores the removed settings tab in old saved values", () => {
+    expect(parseTabOrder(defaults, "settings,auto-fixers,pulls,issues")).toEqual([
       "auto-fixers",
       "pulls",
+      "issues",
+    ]);
+    expect(parseTabOrder(defaults, "pulls,settings,issues,auto-fixers")).toEqual([
+      "pulls",
+      "issues",
+      "auto-fixers",
+    ]);
+    expect(parseTabOrder(defaults, "settings")).toEqual(defaults);
+  });
+
+  it("adds missing tabs at their default position", () => {
+    expect(parseTabOrder(defaults, "auto-fixers,issues")).toEqual([
+      "auto-fixers",
+      "pulls",
+      "issues",
     ]);
     expect(parseTabOrder(defaults, "pulls,issues")).toEqual([
       "pulls",
       "issues",
       "auto-fixers",
-      "settings",
     ]);
-    expect(parseTabOrder(defaults, "settings")).toEqual([
+    expect(parseTabOrder(defaults, "auto-fixers")).toEqual([
       "issues",
       "pulls",
       "auto-fixers",
-      "settings",
     ]);
   });
 
   it("round-trips through formatTabIds", () => {
-    const order = ["auto-fixers", "issues", "settings", "pulls"] as const;
+    const order = ["auto-fixers", "issues", "pulls"] as const;
     expect(parseTabOrder(defaults, formatTabIds(order))).toEqual(order);
   });
 });
 
 describe("hidden panel tabs", () => {
-  const hideable = ["issues", "pulls", "auto-fixers"] as const;
-
-  it("hides only tabs that can be hidden", () => {
-    expect([...parseHiddenTabs(hideable, "pulls, settings,unknown,auto-fixers")]).toEqual([
+  it("hides only known tabs", () => {
+    expect([...parseHiddenTabs(defaults, "pulls, settings,unknown,auto-fixers")]).toEqual([
       "pulls",
       "auto-fixers",
     ]);
-    expect(parseHiddenTabs(hideable, "").size).toBe(0);
+    expect(parseHiddenTabs(defaults, "").size).toBe(0);
   });
 });
 
 describe("moving a panel tab", () => {
   it("moves a tab to the given index", () => {
-    expect(moveTab(defaults, "settings", 0)).toEqual(["settings", "issues", "pulls", "auto-fixers"]);
-    expect(moveTab(defaults, "issues", 2)).toEqual(["pulls", "auto-fixers", "issues", "settings"]);
+    expect(moveTab(defaults, "auto-fixers", 0)).toEqual(["auto-fixers", "issues", "pulls"]);
+    expect(moveTab(defaults, "issues", 2)).toEqual(["pulls", "auto-fixers", "issues"]);
     expect(moveTab(defaults, "pulls", 1)).toEqual(defaults);
   });
 
   it("clamps the index to the list bounds", () => {
     expect(moveTab(defaults, "issues", -1)).toEqual(defaults);
-    expect(moveTab(defaults, "issues", 9)).toEqual(["pulls", "auto-fixers", "settings", "issues"]);
+    expect(moveTab(defaults, "issues", 9)).toEqual(["pulls", "auto-fixers", "issues"]);
   });
 
   it("leaves the order unchanged for an unknown tab", () => {

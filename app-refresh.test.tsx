@@ -207,7 +207,7 @@ it("does not reload when the interval setting is 0", async () => {
   expect(slot.rpcCalls).toHaveLength(before);
 });
 
-it.each(["settings", "auto-fixers"])("does not reload lists on the %s tab", async (subPath) => {
+it.each(["auto-fixers"])("does not reload lists on the %s tab", async (subPath) => {
   await watchScope();
   const slot = renderSlot(
     panel,

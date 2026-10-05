@@ -72,7 +72,7 @@ Set in the plugin settings page or with `bb plugin config gitea set <key> <value
 - `extraRepos`: optional `owner/repo` names, comma or space separated. They work without a project, but agent features need a project checkout.
 - `cacheEntryLimitMiB` (default 16): largest Gitea response read and cached. Larger reads fail with "exceeded the N MiB limit"; raise it for huge diffs.
 - `cacheLimitMiB` (default 64): memory for each display cache.
-- `tabOrder`: panel tab order as comma-separated tab ids `issues`, `pulls`, `auto-fixers`, `settings`. Empty uses that order. Unknown ids are ignored, and a missing tab is added at its default position. The panel opens on the first visible tab.
-- `hiddenTabs`: comma-separated tab ids to hide from the panel: `issues`, `pulls`, `auto-fixers`. The `settings` tab is always shown.
-- The panel's Settings tab changes `tabOrder` and `hiddenTabs` by drag and drop and switches, and shows every switch and select setting.
+- `tabOrder`: panel tab order as comma-separated tab ids `issues`, `pulls`, `auto-fixers`. Empty uses that order. Unknown ids are ignored, and a missing tab is added at its default position. The panel opens on the first visible tab.
+- `hiddenTabs`: comma-separated tab ids to hide from the panel: `issues`, `pulls`, `auto-fixers`. If every tab is hidden, the first tab is shown.
+- The **Panel tabs** section on the plugin settings page changes `tabOrder` and `hiddenTabs` by drag and drop and switches. The settings button in the panel's tab bar opens that page.
 - `refreshSeconds` (default 45): how often the open list or item in the panel reloads. The reload uses the display cache. `0` turns it off.

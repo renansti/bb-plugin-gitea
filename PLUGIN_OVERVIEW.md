@@ -7,7 +7,7 @@ Gitea issues and pull requests inside BB. You can browse, comment, review, and l
 - A Files changed view with a file tree, unified or split diffs, and inline line comments.
 - A **Gitea** environment for new threads. It lists the project's Gitea branches, yours first, with pull request badges that show CI and merge state. The thread starts on the picked branch in a new or existing worktree.
 - Auto-fix (fix CI failures and address review feedback) and Auto-merge (merge when Gitea allows) controls on the Pull requests tab. Each starts a BB agent thread, hidden by default or shown in the project sidebar. Both are off by default.
-- A Settings tab where you reorder the tabs by drag and drop and hide the ones you do not use.
+- A Panel tabs section on the plugin settings page where you reorder the tabs by drag and drop and hide the ones you do not use. A settings button in the panel opens that page.
 
 ## Requirements
 

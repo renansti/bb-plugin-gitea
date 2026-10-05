@@ -26,7 +26,7 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `extraRepos`         | empty               | Extra `owner/repo` names, comma or space separated.                                              |
 | `cacheEntryLimitMiB` | 16                  | Largest Gitea response the plugin reads and caches, in MiB. Larger responses fail with an error. |
 | `cacheLimitMiB`      | 64                  | Memory for each display cache (conversations, diffs, lists), in MiB.                             |
-| `tabOrder`           | empty               | Panel tab order as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`, `settings`.        |
+| `tabOrder`           | empty               | Panel tab order as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                    |
 | `hiddenTabs`         | empty               | Panel tabs to hide, as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                |
 | `autoFixerPlacement` | `Gitea tab only`    | Where new auto-fixer threads show: `Gitea tab only` or `Project sidebar`.                        |
 | `refreshSeconds`     | 45                  | How often the open list or item reloads through the display cache. `0` turns it off.             |
@@ -34,7 +34,7 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com
 bb plugin config gitea set extraRepos owner/repo,team/project
-bb plugin config gitea set tabOrder pulls,issues,auto-fixers,settings
+bb plugin config gitea set tabOrder pulls,issues,auto-fixers
 bb plugin config gitea set autoFixerPlacement "Project sidebar"
 ```
 
@@ -42,11 +42,12 @@ Repositories are the union of matching project `origin` remotes and `extraRepos`
 
 ## Panel
 
-The Gitea panel has four tabs: **Issues**, **Pull requests**, **Auto-fixers**, and **Settings**. It opens on the first visible tab, which is **Issues** by default. Lists filter by repository, state, and text.
+The Gitea panel has three tabs: **Issues**, **Pull requests**, and **Auto-fixers**. It opens on the first visible tab, which is **Issues** by default. Lists filter by repository, state, and text. The settings button at the end of the tab bar opens the plugin's page in BB settings.
 
 - **Issues** has an **Assignee** filter. It shows issues assigned to the signed-in account by default; choose **All** to see every issue. A new issue is assigned to you when the filter is set to you. The tab badge always counts your open assigned issues.
 - **Pull requests** has an **Author** filter. It shows pull requests by the signed-in account by default; choose **All** to see every pull request. The tab badge always counts your open pull requests.
-- **Settings** changes the tab order and hides tabs. Drag a tab by its handle, or focus the handle and press the up or down arrow key. Turn off a tab's switch to hide it. The **Settings** tab cannot be hidden. If the open tab is hidden, the panel switches to the first visible tab. **Settings** also shows the plugin's switch and select settings. These changes are saved in the `tabOrder`, `hiddenTabs`, and other plugin settings, so `bb plugin config gitea` shows them too.
+
+The plugin's page in BB settings has a **Panel tabs** section that changes the tab order and hides tabs. Drag a tab by its handle, or focus the handle and press the up or down arrow key. Turn off a tab's switch to hide it. The last visible tab cannot be hidden. If the open tab is hidden, the panel switches to the first visible tab. These changes are saved in the `tabOrder` and `hiddenTabs` settings, so `bb plugin config gitea` shows them too.
 
 Panel links to `my-issues`, `my-prs`, and `my-issues/new` still work. They open **Issues** or **Pull requests** with the filter set to you.
 
