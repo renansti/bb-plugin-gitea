@@ -36,7 +36,7 @@ const defaultSettings = {
   extraRepos: "acme/widgets",
   cacheEntryLimitMiB: 16,
   cacheLimitMiB: 64,
-  autoFixerPlacement: "Gitea tab",
+  autoFixerPlacement: "Gitea tab only",
 };
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -1905,7 +1905,9 @@ async function startAutoFixers() {
       return { json: [] };
     },
     {
-      settings: { extraRepos: "ops/api" },
+      // "Gitea tab" is a value stored by an older version. It still hides
+      // auto-fixer threads.
+      settings: { extraRepos: "ops/api", autoFixerPlacement: "Gitea tab" },
       projects: [
         {
           id: "project-1",
