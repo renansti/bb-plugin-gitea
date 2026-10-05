@@ -28,6 +28,7 @@ import { branchRpcMethods } from "./branch-contract.js";
 import { registerBranchProvider } from "./branch-provider.js";
 import type { PullStatus } from "./branch-order.js";
 import { tabLayoutSettings } from "./panel-tabs.js";
+import { fillPrompt, parsePromptOverrides, promptText } from "./agent-prompts.js";
 import {
   archived,
   activePolicy,
@@ -697,10 +698,10 @@ function repositoryFromRemote(raw: string, base: URL): string | null {
   return repositorySchema.safeParse(candidate).success ? candidate : null;
 }
 
-/** Whether only the tab layout changed. Such a change keeps Gitea data cached. */
-function onlyTabLayoutChanged<Values extends Record<string, unknown>>(next: Values, prev: Values) {
+/** Whether only settings that do not affect Gitea data changed. Such a change keeps Gitea data cached. */
+function onlyDisplaySettingsChanged<Values extends Record<string, unknown>>(next: Values, prev: Values) {
   return Object.keys(next).every(
-    (key) => tabLayoutSettings.includes(key) || next[key] === prev[key],
+    (key) => tabLayoutSettings.includes(key) || key === "agentPrompts" || next[key] === prev[key],
   );
 }
 
@@ -765,6 +766,14 @@ export default async function plugin(bb: BbPluginApi) {
         "Reads go through the display cache. 0 turns the timer off.",
       experimental_schema: refreshSecondsSchema,
       default: 45,
+    },
+    agentPrompts: {
+      type: "string",
+      label: "Custom agent prompts (JSON)",
+      description:
+        "Edit these in the Agent prompts section. Holds only the prompts you changed. Empty uses every default.",
+      experimental_multiline: true,
+      default: "",
     },
   });
   let config = await settings.get();
@@ -835,7 +844,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
   settings.onChange((next, prev) => {
     config = next;
-    if (onlyTabLayoutChanged(next, prev)) return;
+    if (onlyDisplaySettingsChanged(next, prev)) return;
     loginLookup = null;
     repoDiscovery = null;
     repoOptionCache.clear();
@@ -1993,6 +2002,7 @@ export default async function plugin(bb: BbPluginApi) {
       baseUrl: cleanBaseUrl(config.baseUrl).href,
       login: (await teaLogin()).name,
       policy,
+      overrides: parsePromptOverrides(config.agentPrompts),
     });
   }
 
@@ -2943,10 +2953,21 @@ export default async function plugin(bb: BbPluginApi) {
         cleanBaseUrl(config.baseUrl),
       );
       const ref = `${repo}#${number}`;
-      const instructions =
-        kind === "issue"
-          ? `Read the Gitea issue ${ref}, inspect its comments, and work on the requested change in the project checkout. Do not post or mutate Gitea unless asked.`
-          : `Review Gitea pull request ${ref} and its changed files for correctness, missing tests, and design issues. Report findings with file and line references. Do not post or mutate Gitea unless asked.`;
+      const instructions = fillPrompt(
+        promptText(
+          parsePromptOverrides(config.agentPrompts),
+          kind === "issue" ? "issueAgent" : "prReview",
+        ),
+        {
+          repo,
+          number,
+          ref,
+          title: item.title,
+          url: item.url,
+          baseUrl: cleanBaseUrl(config.baseUrl).href,
+          state: item.state,
+        },
+      );
       const [commentPage, filePage] = await Promise.all([
         paginated(repoPath(repo, `issues/${number}/comments`), signal),
         kind === "pr"

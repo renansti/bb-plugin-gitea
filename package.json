@@ -45,6 +45,8 @@
     "display-cache.ts",
     "pull-files-view.ts",
     "auto-fixer.ts",
+    "agent-prompts.ts",
+    "agent-prompts-editor.tsx",
     "draft-title.ts",
     "panel-tabs.ts",
     "app.tsx",

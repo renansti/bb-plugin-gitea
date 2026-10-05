@@ -27,6 +27,8 @@
     "worktree-git.ts",
     "environment-picker.tsx",
     "auto-fixer.ts",
+    "agent-prompts.ts",
+    "agent-prompts-editor.tsx",
     "draft-title.ts",
     "pull-diff.ts",
     "display-cache.ts",

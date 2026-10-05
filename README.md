@@ -30,6 +30,7 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `hiddenTabs`         | empty               | Panel tabs to hide, as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                |
 | `autoFixerPlacement` | `Gitea tab only`    | Where new auto-fixer threads show: `Gitea tab only` or `Project sidebar`.                        |
 | `refreshSeconds`     | 45                  | How often the open list or item reloads through the display cache. `0` turns it off.             |
+| `agentPrompts`       | empty               | Custom agent prompts as JSON. Edit them in the **Agent prompts** settings section.               |
 
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com
@@ -110,6 +111,26 @@ While idle, an auto-fixer waits with `bb gitea pr-watch`, which checks the pull 
 Gitea has no native auto-merge. The auto-fixer acts with your `tea` login's permissions, and the limits above are enforced by its instructions, not by Gitea. A reported merge or close counts only when Gitea confirms it.
 
 The top of **Pull requests** has **Auto-fix all** and **Auto-merge all**. They apply only to your own pull requests, so they are turned off while **Author** is set to **All**. When on, the plugin checks every five minutes, and immediately when switched on, and starts auto-fixers for your open pull requests that have none. The same bar picks the model for new auto-fixers.
+
+## Agent prompts
+
+The **Agent prompts** section on the plugin's settings page changes the instructions the plugin sends to agents. Each box starts with the default text, and **Reset to default** brings it back.
+
+| Prompt                     | Sent when                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| Auto-fixer                 | An auto-fixer starts, resumes, or its Auto-fix or Auto-merge switch changes. |
+| Auto-fix on / off          | Added to the auto-fixer prompt, based on the Auto-fix switch.                |
+| Auto-merge on / off        | Added to the auto-fixer prompt, based on the Auto-merge switch.              |
+| Send issue to agent        | **Send to agent** on an issue. The issue data is added after it.             |
+| Send pull request to agent | **Send to agent** on a pull request. The pull request data is added after it. |
+
+Placeholders such as `{repo}`, `{number}`, `{ref}`, `{title}`, `{url}`, and `{baseUrl}` are filled in when the prompt is sent. Each box lists the ones it accepts. The editor warns about an unknown placeholder and sends it as written.
+
+The plugin always adds a fixed part after the auto-fixer prompt: the `bb gitea pr-watch` wait command and the `BB_GITEA_AUTO_FIX` end markers. The plugin needs both to track each auto-fixer. The editor shows this part read-only.
+
+A changed prompt applies the next time it is sent. Running auto-fixers keep their instructions until they resume or a switch changes.
+
+The setting stores only the prompts you changed, so `bb plugin config gitea` can back it up or copy it to another machine.
 
 ## CLI
 
