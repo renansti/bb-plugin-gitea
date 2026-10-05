@@ -708,11 +708,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
     autoFixerPlacement: {
       type: "select",
-      label: "Auto-fixer threads appear in",
-      description:
-        "Gitea tab hides auto-fixer threads from the BB sidebar. Project sidebar shows them under the project that has the repository checkout. Applies to auto-fixer threads started after you change this.",
-      options: ["Gitea tab", "Project sidebar"],
-      default: "Gitea tab",
+      label: "Show auto-fixer threads in",
+      description: "Applies to new auto-fixer threads.",
+      options: ["Gitea tab only", "Project sidebar"],
+      default: "Gitea tab only",
     },
   });
   let config = await settings.get();
