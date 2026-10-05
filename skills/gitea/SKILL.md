@@ -75,3 +75,4 @@ Set in the plugin settings page or with `bb plugin config gitea set <key> <value
 - `tabOrder`: panel tab order as comma-separated tab ids `issues`, `pulls`, `auto-fixers`, `settings`. Empty uses that order. Unknown ids are ignored, and a missing tab is added at its default position. The panel opens on the first visible tab.
 - `hiddenTabs`: comma-separated tab ids to hide from the panel: `issues`, `pulls`, `auto-fixers`. The `settings` tab is always shown.
 - The panel's Settings tab changes `tabOrder` and `hiddenTabs` by drag and drop and switches, and shows every switch and select setting.
+- `refreshSeconds` (default 45): how often the open list or item in the panel reloads. The reload uses the display cache. `0` turns it off.

@@ -29,6 +29,7 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `tabOrder`           | empty               | Panel tab order as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`, `settings`.        |
 | `hiddenTabs`         | empty               | Panel tabs to hide, as comma-separated tab ids: `issues`, `pulls`, `auto-fixers`.                |
 | `autoFixerPlacement` | `Gitea tab only`    | Where new auto-fixer threads show: `Gitea tab only` or `Project sidebar`.                        |
+| `refreshSeconds`     | 45                  | How often the open list or item reloads through the display cache. `0` turns it off.             |
 
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com

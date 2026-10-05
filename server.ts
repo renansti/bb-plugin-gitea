@@ -480,7 +480,9 @@ const listPolicy: FreshnessPolicy = {
   retainMs: 10 * 60_000,
   retryMs: 30_000,
 };
-const listTag = "lists";
+/** Names one list for every account. The app builds the same value to match list changes. */
+const listTag = (scope: string, repo: string | undefined, state: string) =>
+  JSON.stringify([scope, repo ? repoKey(repo) : null, state]);
 const filesPolicy: FreshnessPolicy = {
   freshMs: 5 * 60_000,
   retainMs: 30 * 60_000,
@@ -488,6 +490,7 @@ const filesPolicy: FreshnessPolicy = {
 };
 const mebibyte = 1024 * 1024;
 const cacheMiBSchema = z.number().int().min(1).max(1024);
+const refreshSecondsSchema = z.number().int().min(0).max(3600);
 
 function cleanBaseUrl(raw: string): URL {
   const url = new URL(raw);
@@ -755,6 +758,14 @@ export default async function plugin(bb: BbPluginApi) {
       options: ["Gitea tab only", "Project sidebar"],
       default: "Gitea tab only",
     },
+    refreshSeconds: {
+      type: "number",
+      label: "Reload the open list or item every (seconds)",
+      description:
+        "Reads go through the display cache. 0 turns the timer off.",
+      experimental_schema: refreshSecondsSchema,
+      default: 45,
+    },
   });
   let config = await settings.get();
   let loginLookup: Promise<TeaLogin> | null = null;
@@ -764,6 +775,8 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish("display-changed", { item });
   const publishFiles = (item: string | null) =>
     bb.realtime.publish("display-changed", { item, files: true });
+  const publishList = (list: string) =>
+    bb.realtime.publish("display-changed", { item: "lists", list });
   const cacheBounds = (maxEntries: number): CacheBounds => ({
     maxEntries,
     maxBytes: config.cacheLimitMiB * mebibyte,
@@ -786,19 +799,19 @@ export default async function plugin(bb: BbPluginApi) {
     bounds: cacheBounds(32),
     now: Date.now,
     classify: classifyDisplayFailure,
-    onBackgroundSettled: publishDisplay,
+    onBackgroundSettled: publishList,
   });
   const myIssueLists = new DisplayCache<{ login: string; page: ItemPage }>({
     bounds: cacheBounds(32),
     now: Date.now,
     classify: classifyDisplayFailure,
-    onBackgroundSettled: publishDisplay,
+    onBackgroundSettled: publishList,
   });
   const myPullLists = new DisplayCache<{ login: string; page: ItemPage }>({
     bounds: cacheBounds(32),
     now: Date.now,
     classify: classifyDisplayFailure,
-    onBackgroundSettled: publishDisplay,
+    onBackgroundSettled: publishList,
   });
   const displays = [conversations, pullFiles, itemLists, myPullLists, myIssueLists];
   const displayEntries = [64, 16, 32, 32, 32];
@@ -812,10 +825,10 @@ export default async function plugin(bb: BbPluginApi) {
     publishDisplay(tag);
   }
   function forgetLists() {
-    itemLists.invalidate(listTag);
-    myPullLists.invalidate(listTag);
-    myIssueLists.invalidate(listTag);
-    publishDisplay(listTag);
+    itemLists.clear();
+    myPullLists.clear();
+    myIssueLists.clear();
+    publishDisplay("lists");
   }
   bb.onDispose(() => {
     for (const cache of displays) cache.dispose();
@@ -1562,7 +1575,8 @@ export default async function plugin(bb: BbPluginApi) {
     load: (signal: AbortSignal) => Promise<T>,
     signal: AbortSignal | undefined,
   ) {
-    if (refresh) cache.invalidate(listTag);
+    const tag = listTag(scope, repo, state);
+    if (refresh) cache.invalidate(tag);
     const account = await displayAccount();
     const key = JSON.stringify([
       account,
@@ -1570,7 +1584,7 @@ export default async function plugin(bb: BbPluginApi) {
       repo ? repoKey(repo) : null,
       state,
     ]);
-    const display = await cache.read(key, listTag, load, {
+    const display = await cache.read(key, tag, load, {
       policy: listPolicy,
       signal,
     });

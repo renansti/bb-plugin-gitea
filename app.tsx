@@ -118,6 +118,7 @@ type ItemList = {
 type Scope = { state: "unverified" } | { state: "verified"; account: string };
 type DisplayMemory = {
   epoch: number;
+  reloads: number;
   scope: Scope;
   settings: string | null;
   knownSettings: string | null;
@@ -127,6 +128,7 @@ type DisplayMemory = {
 type ScopeEvent =
   | { type: "revoke" }
   | { type: "doubt" }
+  | { type: "reconnect" }
   | { type: "settings"; key: string | null }
   | { type: "status"; epoch: number; status: Status }
   | { type: "list"; epoch: number; key: string; list: ItemList }
@@ -171,6 +173,12 @@ function doubt(memory: DisplayMemory): DisplayMemory {
     : memory;
 }
 
+function reconnect(memory: DisplayMemory): DisplayMemory {
+  return holdsPrivate(memory)
+    ? { ...memory, reloads: memory.reloads + 1 }
+    : memory;
+}
+
 function trust(memory: DisplayMemory, account: string): DisplayMemory {
   const base =
     memory.scope.state === "verified" && memory.scope.account !== account
@@ -195,6 +203,8 @@ function nextMemory(memory: DisplayMemory, event: ScopeEvent): DisplayMemory {
       return invalidate(memory);
     case "doubt":
       return doubt(memory);
+    case "reconnect":
+      return reconnect(memory);
     case "settings": {
       if (event.key === memory.settings) return memory;
       const changed =
@@ -271,6 +281,7 @@ function connectionNotice(status: Status | null | undefined) {
 
 let displayMemory: DisplayMemory = {
   epoch: 0,
+  reloads: 0,
   scope: unverified,
   settings: null,
   knownSettings: null,
@@ -344,7 +355,9 @@ function useScopeWatch() {
   useEffect(() => {
     if (seenConnection.current === connection) return;
     seenConnection.current = connection;
-    dispatch({ type: "doubt" });
+    // Remembered data stays visible while it reloads. A result for another
+    // account, or a failed status check, clears it.
+    if (connection === "connected") dispatch({ type: "reconnect" });
   }, [connection]);
   const onChange = useCallback((payload: unknown) => {
     if (parseDisplayChange(payload)?.scope === "all")
@@ -386,6 +399,15 @@ const openMyIssues: ListFilters = {
 
 function listKey({ view, person, state, repo, query }: ListFilters) {
   return JSON.stringify([view, person, repo, state, query]);
+}
+
+/** Matches the server's list cache tag, which leaves out the query. */
+function listTag({ view, person, state, repo }: ListFilters) {
+  const scope =
+    person === "all"
+      ? view === "issues" ? "issue" : "pr"
+      : view === "issues" ? "my-issues" : "my-prs";
+  return JSON.stringify([scope, repo === "all" ? null : repo.toLowerCase(), state]);
 }
 
 function useIsDarkTheme() {
@@ -819,7 +841,7 @@ function itemTag(item: Pick<Item, "repo" | "number">) {
 
 type DisplayChange =
   | { scope: "all"; files: boolean }
-  | { scope: "lists" }
+  | { scope: "lists"; list: string | null }
   | { scope: "item"; tag: string; files: boolean };
 
 function parseDisplayChange(payload: unknown): DisplayChange | null {
@@ -829,7 +851,11 @@ function parseDisplayChange(payload: unknown): DisplayChange | null {
   const files = "files" in payload && payload.files === true;
   if (item === null) return { scope: "all", files };
   if (typeof item !== "string") return null;
-  if (item === "lists") return { scope: "lists" };
+  if (item === "lists") {
+    // A payload without a list changes every list.
+    const list = "list" in payload && typeof payload.list === "string" ? payload.list : null;
+    return { scope: "lists", list };
+  }
   return { scope: "item", tag: item, files };
 }
 
@@ -859,6 +885,38 @@ function useCoalesced(run: () => void, delayMs: number) {
       latest.current();
     }, delayMs);
   }, [delayMs]);
+}
+
+const defaultRefreshSeconds = 45;
+
+function useRefreshSeconds() {
+  const seconds = useSettings().values?.refreshSeconds;
+  return typeof seconds === "number" ? seconds : defaultRefreshSeconds;
+}
+
+// Calls `run` every `seconds` while `active`. Ticks wait while the document is
+// hidden, and one missed tick runs when it becomes visible again.
+function usePolling(run: () => void, seconds: number, active: boolean) {
+  const latest = useRef(run);
+  latest.current = run;
+  useEffect(() => {
+    if (!active || seconds <= 0) return;
+    let due = false;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") due = true;
+      else latest.current();
+    }, seconds * 1000);
+    const onVisibility = () => {
+      if (!due || document.visibilityState === "hidden") return;
+      due = false;
+      latest.current();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [active, seconds]);
 }
 
 function errorText(error: unknown, fallback: string) {
@@ -900,8 +958,9 @@ function useItemList(
 ) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const key = enabled ? listKey(filters) : null;
+  const tag = listTag(filters);
   const { view, person, state, repo, query } = filters;
-  const { epoch } = memory;
+  const { epoch, reloads } = memory;
   const [failure, setFailure] = useState<{
     key: string;
     epoch: number;
@@ -936,7 +995,7 @@ function useItemList(
       }
       setPending(null);
     },
-    [key, rpc, view, person, state, repo, query, epoch, onFailure],
+    [key, rpc, view, person, state, repo, query, epoch, reloads, onFailure],
   );
   useEffect(() => {
     void load(false);
@@ -946,9 +1005,11 @@ function useItemList(
   }, [load]);
   const onChange = useCallback(
     (payload: unknown) => {
-      if (parseDisplayChange(payload)?.scope === "lists") void load(false);
+      const change = parseDisplayChange(payload);
+      if (change?.scope === "lists" && (change.list === null || change.list === tag))
+        void load(false);
     },
-    [load],
+    [load, tag],
   );
   useRealtime("display-changed", onChange);
   const remembered =
@@ -966,6 +1027,10 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
   const epoch = useSyncExternalStore(
     subscribeMemory,
     () => displayMemory.epoch,
+  );
+  const reloads = useSyncExternalStore(
+    subscribeMemory,
+    () => displayMemory.reloads,
   );
   const key = target ? `${epoch}:${target.kind}:${itemTag(target)}` : null;
   const [conversation, setConversation] =
@@ -991,7 +1056,7 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
       }
       if (run === conversationRun.current) setConversation({ key, view });
     },
-    [key, rpc, target],
+    [key, rpc, target, reloads],
   );
   useEffect(() => {
     void loadConversation(false);
@@ -1038,7 +1103,7 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
       }
       if (run === filesRun.current) setFiles({ key: filesKey, view });
     },
-    [filesKey, rpc, target],
+    [filesKey, rpc, target, reloads],
   );
   useEffect(() => {
     if (!wantFiles) return;
@@ -1060,6 +1125,8 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
     [loadConversation, loadFiles, target, wantFiles],
   );
   useRealtime("display-changed", onChange);
+  const refreshSeconds = useRefreshSeconds();
+  usePolling(() => void loadConversation(false), refreshSeconds, target !== null);
   const shownFiles = files?.key === filesKey ? files.view : loading;
   const filesMoved =
     shownFiles.state === "ready" &&
@@ -2320,6 +2387,16 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const [detailSection, setDetailSection] =
     useState<DetailSection>("conversation");
   const newIssue = route?.kind === "new-issue";
+  const refreshSeconds = useRefreshSeconds();
+  usePolling(
+    () => {
+      void loadList(false);
+      void openMine.load(false);
+      void openIssues.load(false);
+    },
+    refreshSeconds,
+    showsItems && route?.kind !== "item" && !newIssue,
+  );
   const display = useItemDisplay(route?.kind === "item" ? route.item : null, detailSection === "files");
   const shown = display.conversation;
   const detail = useMemo(
@@ -2348,10 +2425,10 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   );
 
   const loadItems = useCallback(() => loadList(false), [loadList]);
-  const { epoch } = memory;
+  const { epoch, reloads } = memory;
   useEffect(() => {
     void loadStatus();
-  }, [loadStatus, epoch]);
+  }, [loadStatus, epoch, reloads]);
   const reloadAutoFixers = useCallback(() => {
     if (view === "pulls") void loadItems();
   }, [loadItems, view]);
