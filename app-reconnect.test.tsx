@@ -349,3 +349,36 @@ it("still clears the open conversation on a full display change", async () => {
   await reread.release();
   expect(await screen.findByText("New detail")).toBeTruthy();
 });
+
+it("reloads only the list named by a background refresh, and every list for a plain list change", async () => {
+  await watchScope();
+  const slot = renderSlot(
+    panel,
+    { subPath: "" },
+    {
+      settings,
+      rpc: {
+        status: () => status(),
+        getAutoFixerPreferences: () => preferences,
+        listMyPullRequests: () => mine(["Pull row"]),
+        listMyIssues: () => ({ ...mine([]), preferences: undefined }),
+      },
+    },
+  );
+  expect(await screen.findByText("Pull row")).toBeTruthy();
+  await waitFor(() => expect(calls(slot, "listMyIssues")).toBe(1));
+  const pulls = calls(slot, "listMyPullRequests");
+
+  await slot.emitRealtime("display-changed", {
+    item: "lists",
+    list: '["my-issues",null,"open"]',
+  });
+  await waitFor(() => expect(calls(slot, "listMyIssues")).toBe(2));
+  expect(calls(slot, "listMyPullRequests")).toBe(pulls);
+
+  await slot.emitRealtime("display-changed", { item: "lists" });
+  await waitFor(() => expect(calls(slot, "listMyIssues")).toBe(3));
+  await waitFor(() =>
+    expect(calls(slot, "listMyPullRequests")).toBeGreaterThan(pulls),
+  );
+});

@@ -1536,6 +1536,7 @@ function listGitea(pulls: () => TeaReply) {
 }
 
 const readsList = (call: TeaCall) => call.endpoint.includes("type=pulls");
+const openPulls = '["my-prs",null,"open"]';
 
 function authoredPull(number: number, title: string, author = "dev") {
   return {
@@ -1580,7 +1581,10 @@ it("serves a remembered pull request list without Gitea reads and refreshes a st
     ["refreshing", "First"],
   ]);
   await vi.waitFor(() =>
-    expect(displaySignals(host).at(-1)?.payload).toEqual({ item: "lists" }),
+    expect(displaySignals(host).at(-1)?.payload).toEqual({
+      item: "lists",
+      list: openPulls,
+    }),
   );
   expect(calls.slice(warm).filter(readsList)).toHaveLength(1);
   expect(await myPulls(host)).toMatchObject({
@@ -1602,6 +1606,49 @@ it("serves a remembered pull request list without Gitea reads and refreshes a st
   const settled = calls.length;
   await myPulls(host);
   expect(calls).toHaveLength(settled);
+});
+
+it("names only the refreshed list after a background refresh or Refresh, and every list after a mutation", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  cleanups.push(() => {
+    vi.useRealTimers();
+  });
+  const { host, calls } = await start(({ endpoint, method }) => {
+    if (method !== "GET") return { json: {} };
+    return listGitea(() => ({ json: [authoredPull(4, "Mine")] }))({
+      endpoint,
+    } as TeaCall);
+  });
+  const reads = (state: string) =>
+    calls.filter(
+      (call) => readsList(call) && call.endpoint.includes(`state=${state}`),
+    ).length;
+  await myPulls(host);
+  await myPulls(host, { state: "closed" });
+  expect([reads("open"), reads("closed")]).toEqual([1, 1]);
+
+  await myPulls(host, { refresh: true });
+  await myPulls(host, { state: "closed" });
+  expect([reads("open"), reads("closed")]).toEqual([2, 1]);
+
+  vi.setSystemTime(Date.now() + 20_000);
+  const signals = displaySignals(host).length;
+  expect((await myPulls(host)).freshness.state).toBe("refreshing");
+  await vi.waitFor(() =>
+    expect(displaySignals(host).slice(signals).map((signal) => signal.payload))
+      .toEqual([{ item: "lists", list: openPulls }]),
+  );
+  expect([reads("open"), reads("closed")]).toEqual([3, 1]);
+
+  await host.harness.behavior.callRpc("setState", {
+    repo: "acme/widgets",
+    number: 4,
+    state: "closed",
+  });
+  expect(displaySignals(host).at(-1)?.payload).toEqual({ item: "lists" });
+  await myPulls(host);
+  await myPulls(host, { state: "closed" });
+  expect([reads("open"), reads("closed")]).toEqual([4, 2]);
 });
 
 it("rereads pull request lists after Refresh, list-changing mutations, account changes, and a rejected login", async () => {

@@ -373,6 +373,12 @@ function listKey({ view, state, repo, query }: ListFilters) {
   return JSON.stringify([view, repo, state, query]);
 }
 
+/** Matches the server's list cache tag, which leaves out the query. */
+function listTag({ view, state, repo }: ListFilters) {
+  const scope = view === "issues" ? "issue" : view === "pulls" ? "pr" : view;
+  return JSON.stringify([scope, repo === "all" ? null : repo.toLowerCase(), state]);
+}
+
 function useIsDarkTheme() {
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains("dark"),
@@ -804,7 +810,7 @@ function itemTag(item: Pick<Item, "repo" | "number">) {
 
 type DisplayChange =
   | { scope: "all"; files: boolean }
-  | { scope: "lists" }
+  | { scope: "lists"; list: string | null }
   | { scope: "item"; tag: string; files: boolean };
 
 function parseDisplayChange(payload: unknown): DisplayChange | null {
@@ -814,7 +820,11 @@ function parseDisplayChange(payload: unknown): DisplayChange | null {
   const files = "files" in payload && payload.files === true;
   if (item === null) return { scope: "all", files };
   if (typeof item !== "string") return null;
-  if (item === "lists") return { scope: "lists" };
+  if (item === "lists") {
+    // A payload without a list changes every list.
+    const list = "list" in payload && typeof payload.list === "string" ? payload.list : null;
+    return { scope: "lists", list };
+  }
   return { scope: "item", tag: item, files };
 }
 
@@ -886,6 +896,7 @@ function useItemList(
 ) {
   const rpc = useRpc<typeof giteaRpcContract>();
   const key = enabled ? listKey(filters) : null;
+  const tag = listTag(filters);
   const { view, state, repo, query } = filters;
   const { epoch, reloads } = memory;
   const [failure, setFailure] = useState<{
@@ -932,9 +943,11 @@ function useItemList(
   }, [load]);
   const onChange = useCallback(
     (payload: unknown) => {
-      if (parseDisplayChange(payload)?.scope === "lists") void load(false);
+      const change = parseDisplayChange(payload);
+      if (change?.scope === "lists" && (change.list === null || change.list === tag))
+        void load(false);
     },
-    [load],
+    [load, tag],
   );
   useRealtime("display-changed", onChange);
   const remembered =
