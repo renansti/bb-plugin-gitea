@@ -718,14 +718,14 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Tab order",
       description:
-        "Comma-separated tab ids: issues, pulls, auto-fixers, settings. Unknown ids are ignored, and missing tabs keep their default position. Empty uses the default order.",
+        "Comma-separated tab ids: issues, pulls, auto-fixers. Unknown ids are ignored, and missing tabs keep their default position. Empty uses the default order.",
       default: "",
     },
     hiddenTabs: {
       type: "string",
       label: "Hidden tabs",
       description:
-        "Comma-separated tab ids to hide: issues, pulls, auto-fixers. The Settings tab is always shown.",
+        "Comma-separated tab ids to hide: issues, pulls, auto-fixers. If every tab is hidden, the first tab is shown.",
       default: "",
     },
   });

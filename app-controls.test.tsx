@@ -85,7 +85,7 @@ it.each([false, true])("opens on Issues assigned to you and keeps the badge on t
   Element.prototype.scrollIntoView = scrollIntoView;
 });
 
-it("lists tabs in the order Issues, Pull requests, Auto-fixers, Settings", () => {
+it("lists tabs in the order Issues, Pull requests, Auto-fixers", () => {
   renderSlot(app.navPanels[0]!, { subPath: "" }, {
     rpc: {
       status: () => ({ state: "connected", login: "dev", account, repos: [] }),
@@ -95,7 +95,7 @@ it("lists tabs in the order Issues, Pull requests, Auto-fixers, Settings", () =>
     },
   });
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent))
-    .toEqual(["Issues", "Pull requests", "Auto-fixers", "Settings"]);
+    .toEqual(["Issues", "Pull requests", "Auto-fixers"]);
 });
 
 it("shows Auto-fix and Auto-merge controls for a Pull requests row and turns off the bulk controls for All", async () => {

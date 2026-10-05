@@ -6,7 +6,7 @@ Gitea issues and pull requests inside BB. You can browse, comment, review, and l
 - A conversation view where you comment, edit or delete your own comments, pick labels and assignees, close or reopen, review, and see checks.
 - A Files changed view with a file tree, unified or split diffs, and inline line comments.
 - Auto-fix (fix CI failures and address review feedback) and Auto-merge (merge when Gitea allows) controls on the Pull requests tab. Each starts a hidden BB agent thread. Both are off by default.
-- A Settings tab where you reorder the tabs by drag and drop and hide the ones you do not use.
+- A Panel tabs section on the plugin settings page where you reorder the tabs by drag and drop and hide the ones you do not use. A settings button in the panel opens that page.
 
 ## Requirements
 
