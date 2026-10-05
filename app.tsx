@@ -102,6 +102,7 @@ type ItemList = {
 type Scope = { state: "unverified" } | { state: "verified"; account: string };
 type DisplayMemory = {
   epoch: number;
+  reloads: number;
   scope: Scope;
   settings: string | null;
   knownSettings: string | null;
@@ -111,6 +112,7 @@ type DisplayMemory = {
 type ScopeEvent =
   | { type: "revoke" }
   | { type: "doubt" }
+  | { type: "reconnect" }
   | { type: "settings"; key: string | null }
   | { type: "status"; epoch: number; status: Status }
   | { type: "list"; epoch: number; key: string; list: ItemList }
@@ -155,6 +157,12 @@ function doubt(memory: DisplayMemory): DisplayMemory {
     : memory;
 }
 
+function reconnect(memory: DisplayMemory): DisplayMemory {
+  return holdsPrivate(memory)
+    ? { ...memory, reloads: memory.reloads + 1 }
+    : memory;
+}
+
 function trust(memory: DisplayMemory, account: string): DisplayMemory {
   const base =
     memory.scope.state === "verified" && memory.scope.account !== account
@@ -179,6 +187,8 @@ function nextMemory(memory: DisplayMemory, event: ScopeEvent): DisplayMemory {
       return invalidate(memory);
     case "doubt":
       return doubt(memory);
+    case "reconnect":
+      return reconnect(memory);
     case "settings": {
       if (event.key === memory.settings) return memory;
       const changed =
@@ -255,6 +265,7 @@ function connectionNotice(status: Status | null | undefined) {
 
 let displayMemory: DisplayMemory = {
   epoch: 0,
+  reloads: 0,
   scope: unverified,
   settings: null,
   knownSettings: null,
@@ -318,7 +329,9 @@ function useScopeWatch() {
   useEffect(() => {
     if (seenConnection.current === connection) return;
     seenConnection.current = connection;
-    dispatch({ type: "doubt" });
+    // Remembered data stays visible while it reloads. A result for another
+    // account, or a failed status check, clears it.
+    if (connection === "connected") dispatch({ type: "reconnect" });
   }, [connection]);
   const onChange = useCallback((payload: unknown) => {
     if (parseDisplayChange(payload)?.scope === "all")
@@ -874,7 +887,7 @@ function useItemList(
   const rpc = useRpc<typeof giteaRpcContract>();
   const key = enabled ? listKey(filters) : null;
   const { view, state, repo, query } = filters;
-  const { epoch } = memory;
+  const { epoch, reloads } = memory;
   const [failure, setFailure] = useState<{
     key: string;
     epoch: number;
@@ -909,7 +922,7 @@ function useItemList(
       }
       setPending(null);
     },
-    [key, rpc, view, state, repo, query, epoch, onFailure],
+    [key, rpc, view, state, repo, query, epoch, reloads, onFailure],
   );
   useEffect(() => {
     void load(false);
@@ -940,6 +953,10 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
     subscribeMemory,
     () => displayMemory.epoch,
   );
+  const reloads = useSyncExternalStore(
+    subscribeMemory,
+    () => displayMemory.reloads,
+  );
   const key = target ? `${epoch}:${target.kind}:${itemTag(target)}` : null;
   const [conversation, setConversation] =
     useState<Keyed<ConversationView> | null>(null);
@@ -964,7 +981,7 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
       }
       if (run === conversationRun.current) setConversation({ key, view });
     },
-    [key, rpc, target],
+    [key, rpc, target, reloads],
   );
   useEffect(() => {
     void loadConversation(false);
@@ -1011,7 +1028,7 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
       }
       if (run === filesRun.current) setFiles({ key: filesKey, view });
     },
-    [filesKey, rpc, target],
+    [filesKey, rpc, target, reloads],
   );
   useEffect(() => {
     if (!wantFiles) return;
@@ -1943,10 +1960,10 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   );
 
   const loadItems = useCallback(() => loadList(false), [loadList]);
-  const { epoch } = memory;
+  const { epoch, reloads } = memory;
   useEffect(() => {
     void loadStatus();
-  }, [loadStatus, epoch]);
+  }, [loadStatus, epoch, reloads]);
   const reloadAutoFixers = useCallback(() => {
     if (view === "my-prs" || view === "pulls") void loadItems();
   }, [loadItems, view]);

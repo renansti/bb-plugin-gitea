@@ -609,7 +609,7 @@ it("forgets every remembered filter on an auth rejection and ignores a reply tha
   expect(shownBlank()).toBe(false);
 });
 
-it("confirms the account before repainting remembered rows after a realtime reconnect", async () => {
+it("keeps remembered rows visible while a realtime reconnect reloads them", async () => {
   const scope = await watchScope();
   await visit(["Remembered row"]);
   await scope.setRealtimeConnectionState("reconnecting");
@@ -617,7 +617,6 @@ it("confirms the account before repainting remembered rows after a realtime reco
 
   const readiness = held();
   const list = held();
-  const shown = recordShown("Remembered row");
   const returned = renderSlot(
     panel,
     { subPath: "" },
@@ -636,11 +635,10 @@ it("confirms the account before repainting remembered rows after a realtime reco
       },
     },
   );
-  expect(skeleton()).toBeTruthy();
-  expect(shown()).toBe(false);
+  expect(screen.getByText("Remembered row")).toBeTruthy();
+  expect(skeleton()).toBeNull();
   await readiness.release();
-  expect(await screen.findByText("Remembered row")).toBeTruthy();
-  expect(listCalls(returned)).toHaveLength(1);
+  expect(screen.getByText("Remembered row")).toBeTruthy();
   await list.release();
   expect(await screen.findByText("Refreshed row")).toBeTruthy();
 });
