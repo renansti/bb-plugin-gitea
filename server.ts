@@ -484,6 +484,7 @@ const filesPolicy: FreshnessPolicy = {
 };
 const mebibyte = 1024 * 1024;
 const cacheMiBSchema = z.number().int().min(1).max(1024);
+const refreshSecondsSchema = z.number().int().min(0).max(3600);
 
 function cleanBaseUrl(raw: string): URL {
   const url = new URL(raw);
@@ -707,6 +708,14 @@ export default async function plugin(bb: BbPluginApi) {
         "Conversations, diffs, and lists each have a cache of this size.",
       experimental_schema: cacheMiBSchema,
       default: 64,
+    },
+    refreshSeconds: {
+      type: "number",
+      label: "Reload the open list or item every (seconds)",
+      description:
+        "Reads go through the display cache. 0 turns the timer off.",
+      experimental_schema: refreshSecondsSchema,
+      default: 45,
     },
   });
   let config = await settings.get();

@@ -26,6 +26,7 @@ The plugin id is `gitea` and it adds the `bb gitea` command.
 | `extraRepos`         | empty               | Extra `owner/repo` names, comma or space separated.                                              |
 | `cacheEntryLimitMiB` | 16                  | Largest Gitea response the plugin reads and caches, in MiB. Larger responses fail with an error. |
 | `cacheLimitMiB`      | 64                  | Memory for each display cache (conversations, diffs, lists), in MiB.                             |
+| `refreshSeconds`     | 45                  | How often the open list or item reloads through the display cache. `0` turns it off.             |
 
 ```sh
 bb plugin config gitea set baseUrl https://gitea.example.com

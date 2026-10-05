@@ -856,6 +856,38 @@ function useCoalesced(run: () => void, delayMs: number) {
   }, [delayMs]);
 }
 
+const defaultRefreshSeconds = 45;
+
+function useRefreshSeconds() {
+  const seconds = useSettings().values?.refreshSeconds;
+  return typeof seconds === "number" ? seconds : defaultRefreshSeconds;
+}
+
+// Calls `run` every `seconds` while `active`. Ticks wait while the document is
+// hidden, and one missed tick runs when it becomes visible again.
+function usePolling(run: () => void, seconds: number, active: boolean) {
+  const latest = useRef(run);
+  latest.current = run;
+  useEffect(() => {
+    if (!active || seconds <= 0) return;
+    let due = false;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") due = true;
+      else latest.current();
+    }, seconds * 1000);
+    const onVisibility = () => {
+      if (!due || document.visibilityState === "hidden") return;
+      due = false;
+      latest.current();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [active, seconds]);
+}
+
 function errorText(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -1063,6 +1095,8 @@ function useItemDisplay(target: ItemRef | null, wantFiles: boolean) {
     [loadConversation, loadFiles, target, wantFiles],
   );
   useRealtime("display-changed", onChange);
+  const refreshSeconds = useRefreshSeconds();
+  usePolling(() => void loadConversation(false), refreshSeconds, target !== null);
   const shownFiles = files?.key === filesKey ? files.view : loading;
   const filesMoved =
     shownFiles.state === "ready" &&
@@ -1945,6 +1979,16 @@ function GiteaPanel({ subPath }: PluginNavPanelProps) {
   const [detailSection, setDetailSection] =
     useState<DetailSection>("conversation");
   const newIssue = route?.kind === "new-issue";
+  const refreshSeconds = useRefreshSeconds();
+  usePolling(
+    () => {
+      void loadList(false);
+      void openMine.load(false);
+      void openIssues.load(false);
+    },
+    refreshSeconds,
+    route?.kind !== "item" && !newIssue,
+  );
   const display = useItemDisplay(route?.kind === "item" ? route.item : null, detailSection === "files");
   const shown = display.conversation;
   const detail = useMemo(

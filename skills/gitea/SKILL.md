@@ -72,3 +72,4 @@ Set in the plugin settings page or with `bb plugin config gitea set <key> <value
 - `extraRepos`: optional `owner/repo` names, comma or space separated. They work without a project, but agent features need a project checkout.
 - `cacheEntryLimitMiB` (default 16): largest Gitea response read and cached. Larger reads fail with "exceeded the N MiB limit"; raise it for huge diffs.
 - `cacheLimitMiB` (default 64): memory for each display cache.
+- `refreshSeconds` (default 45): how often the open list or item in the panel reloads. The reload uses the display cache. `0` turns it off.

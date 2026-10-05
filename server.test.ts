@@ -36,6 +36,7 @@ const defaultSettings = {
   extraRepos: "acme/widgets",
   cacheEntryLimitMiB: 16,
   cacheLimitMiB: 64,
+  refreshSeconds: 45,
 };
 
 const cleanups: Array<() => Promise<void> | void> = [];
