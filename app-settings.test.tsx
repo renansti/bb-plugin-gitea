@@ -258,6 +258,24 @@ it("shows the plugin's switch and select settings from their definitions", async
   expect(placement.textContent).toBe("Project sidebar");
 });
 
+it("shows the hint for the selected option and keeps the description on hover", async () => {
+  const placement = {
+    type: "select" as const,
+    label: "Show auto-fixer threads in",
+    description: "Applies to new auto-fixer threads.",
+    options: ["Gitea tab only", "Project sidebar"],
+    default: "Gitea tab only",
+  };
+  render("settings", {}, { autoFixerPlacement: placement });
+  const select = await screen.findByRole("combobox", { name: "Show auto-fixer threads in" });
+  const hint = screen.getByText("New auto-fixers show only in the Auto-fixers tab.");
+  expect(hint.getAttribute("title")).toBe("Applies to new auto-fixer threads.");
+  expect(screen.queryByText("Applies to new auto-fixer threads.")).toBeNull();
+  fireEvent.click(select);
+  await act(async () => fireEvent.click(screen.getByRole("option", { name: "Project sidebar" })));
+  expect(screen.getByText("New auto-fixers show under the pull request's project.")).toBeTruthy();
+});
+
 it("leaves out the Panel section when the plugin has no switch or select settings", async () => {
   const { slot } = render("settings", {}, { baseUrl: schema.baseUrl, tabOrder: schema.tabOrder });
   await vi.waitFor(() => expect(slot.sdkCalls.map((call) => call.method)).toContain("plugins.getSettings"));

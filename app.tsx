@@ -2121,6 +2121,17 @@ type SettingSchema = Awaited<
 >["schema"];
 
 /**
+ * One-line hints for select settings, by setting key and then by option. A
+ * hint replaces the setting description while its option is selected.
+ */
+const selectHints: Record<string, Record<string, string>> = {
+  autoFixerPlacement: {
+    "Gitea tab only": "New auto-fixers show only in the Auto-fixers tab.",
+    "Project sidebar": "New auto-fixers show under the pull request's project.",
+  },
+};
+
+/**
  * Shows every switch and select setting the plugin defines, using the labels
  * and descriptions from its setting definitions. Text and number settings,
  * such as the Gitea URL and cache sizes, stay in BB's plugin settings.
@@ -2154,11 +2165,12 @@ function PluginSettingFields({
     };
   }, [sdk, pluginId]);
   const fields = schema.state === "ready"
-    ? Object.entries(schema.value).flatMap(([key, definition]) =>
-        definition.type === "boolean" || definition.type === "select"
-          ? [{ key, definition, value: values[key] ?? definition.default }]
-          : [],
-      )
+    ? Object.entries(schema.value).flatMap(([key, definition]) => {
+        if (definition.type !== "boolean" && definition.type !== "select") return [];
+        const value = values[key] ?? definition.default;
+        const hint = typeof value === "string" ? selectHints[key]?.[value] : undefined;
+        return [{ key, definition, value, hint }];
+      })
     : [];
   if (schema.state === "ready" && !fields.length) return null;
   return (
@@ -2170,12 +2182,14 @@ function PluginSettingFields({
         <div className="text-xs text-muted-foreground">{schema.message}</div>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-          {fields.map(({ key, definition, value }) => (
+          {fields.map(({ key, definition, value, hint }) => (
             <li key={key} className="flex items-center gap-3 px-3 py-2">
               <div className="min-w-0 flex-1">
                 <div>{definition.label}</div>
-                {definition.description && (
-                  <div className="text-xs text-muted-foreground">{definition.description}</div>
+                {(hint ?? definition.description) && (
+                  <div className="text-xs text-muted-foreground" title={hint && definition.description}>
+                    {hint ?? definition.description}
+                  </div>
                 )}
               </div>
               {definition.type === "boolean" ? (
